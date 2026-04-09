@@ -369,7 +369,8 @@ export function StatusPage() {
   const homepageQuery = useQuery({
     queryKey: ['homepage'],
     queryFn: fetchHomepage,
-    refetchInterval: 30_000,
+    staleTime: 60_000,
+    refetchInterval: 60_000,
   });
 
   const derivedTitle = homepageQuery.data?.site_title || 'Uptimer';
@@ -468,6 +469,8 @@ export function StatusPage() {
   const data = homepageQuery.data;
   const bannerConfig = getBannerConfig(data.banner.status, t);
   const activeIncidents = data.active_incidents;
+  const hiddenMonitorCount = Math.max(0, data.monitor_count_total - data.monitors.length);
+  const hasPartialBootstrap = data.bootstrap_mode === 'partial' && hiddenMonitorCount > 0;
 
   const siteTitle = derivedTitle;
   const timeZone = derivedTimeZone;
@@ -686,6 +689,15 @@ export function StatusPage() {
           {data.monitors.length === 0 && (
             <Card className="p-8 text-center">
               <p className="text-slate-500 dark:text-slate-400">{t('status_page.no_monitors')}</p>
+            </Card>
+          )}
+          {hasPartialBootstrap && (
+            <Card className="mt-3 p-4 text-sm text-slate-600 dark:text-slate-300">
+              {homepageQuery.isError
+                ? t('status_page.partial_bootstrap_error')
+                : t('status_page.partial_bootstrap_loading', {
+                    count: hiddenMonitorCount,
+                  })}
             </Card>
           )}
         </section>
