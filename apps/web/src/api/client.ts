@@ -33,6 +33,7 @@ import type {
   StatusResponse,
   MonitorAnalyticsResponse,
   MonitorOutagesResponse,
+  PublicHomepageResponse,
   UptimeResponse,
 } from './types';
 
@@ -44,7 +45,13 @@ const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? '/api/
 const PUBLIC_CACHE_TTL_MS = 30_000;
 const publicCache = new Map<string, { at: number; value: unknown }>();
 
+const LS_PUBLIC_HOMEPAGE_KEY = 'uptimer_public_homepage_snapshot_v1';
 const LS_PUBLIC_STATUS_KEY = 'uptimer_public_status_snapshot_v1';
+
+type PersistedHomepageCache = {
+  at: number;
+  value: PublicHomepageResponse;
+};
 
 type PersistedStatusCache = {
   at: number;
@@ -60,6 +67,33 @@ function getCachedPublic<T>(key: string): T | null {
 
 function setCachedPublic(key: string, value: unknown) {
   publicCache.set(key, { at: Date.now(), value });
+}
+
+function readPersistedHomepageCache(maxAgeMs: number): PublicHomepageResponse | null {
+  try {
+    const raw = localStorage.getItem(LS_PUBLIC_HOMEPAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== 'object') return null;
+
+    const at = (parsed as { at?: unknown }).at;
+    const value = (parsed as { value?: unknown }).value;
+    if (typeof at !== 'number' || !Number.isFinite(at)) return null;
+    if (Date.now() - at > maxAgeMs) return null;
+    if (!value || typeof value !== 'object') return null;
+    return value as PublicHomepageResponse;
+  } catch {
+    return null;
+  }
+}
+
+function writePersistedHomepageCache(value: PublicHomepageResponse): void {
+  try {
+    const payload: PersistedHomepageCache = { at: Date.now(), value };
+    localStorage.setItem(LS_PUBLIC_HOMEPAGE_KEY, JSON.stringify(payload));
+  } catch {
+    // Best-effort only.
+  }
 }
 
 function readPersistedStatusCache(maxAgeMs: number): StatusResponse | null {
@@ -186,6 +220,31 @@ export async function fetchStatus(): Promise<StatusResponse> {
     if (persisted) return persisted;
 
     const stale = auth.shouldBypassCache ? null : getCachedPublic<StatusResponse>(url);
+    if (stale) return stale;
+
+    throw err;
+  }
+}
+
+export async function fetchHomepage(): Promise<PublicHomepageResponse> {
+  const url = `${API_BASE}/public/homepage`;
+  const auth = getOptionalPublicAuth();
+  const cached = auth.shouldBypassCache ? null : getCachedPublic<PublicHomepageResponse>(url);
+  if (cached) return cached;
+
+  try {
+    const res = await fetch(url, auth.fetchInit);
+    const data = await handleResponse<PublicHomepageResponse>(res);
+    if (!auth.shouldBypassCache) {
+      setCachedPublic(url, data);
+      writePersistedHomepageCache(data);
+    }
+    return data;
+  } catch (err) {
+    const persisted = auth.shouldBypassCache ? null : readPersistedHomepageCache(10 * 60_000);
+    if (persisted) return persisted;
+
+    const stale = auth.shouldBypassCache ? null : getCachedPublic<PublicHomepageResponse>(url);
     if (stale) return stale;
 
     throw err;
@@ -422,6 +481,18 @@ export async function fetchPublicIncidents(
   if (cursor) qs.set('cursor', String(cursor));
   const res = await fetch(`${API_BASE}/public/incidents?${qs.toString()}`, auth.fetchInit);
   return handleResponse<PublicIncidentsResponse>(res);
+}
+
+export async function fetchPublicIncidentDetail(
+  id: number,
+  opts: { resolvedOnly?: boolean } = {},
+): Promise<Incident> {
+  const data = await fetchPublicIncidents(20, undefined, opts);
+  const incident = data.incidents.find((entry) => entry.id === id);
+  if (!incident) {
+    throw new ApiError('NOT_FOUND', 'Incident not found in public feed.', 404);
+  }
+  return incident;
 }
 
 // Public API - Maintenance windows

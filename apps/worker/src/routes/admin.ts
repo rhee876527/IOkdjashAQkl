@@ -20,8 +20,8 @@ import type { Env } from '../env';
 import { requireAdmin } from '../middleware/auth';
 import { AppError } from '../middleware/errors';
 import { requireAdminRateLimit } from '../middleware/rate-limit';
-import { computePublicStatusPayload } from '../public/status';
-import { refreshPublicStatusSnapshot } from '../snapshots';
+import { computePublicHomepagePayload } from '../public/homepage';
+import { refreshPublicHomepageSnapshotIfNeeded } from '../snapshots';
 import { runHttpCheck } from '../monitor/http';
 import { validateHttpTarget, validateTcpTarget } from '../monitor/targets';
 import { runTcpCheck } from '../monitor/tcp';
@@ -73,15 +73,15 @@ adminRoutes.route('/analytics', adminAnalyticsRoutes);
 adminRoutes.route('/exports', adminExportsRoutes);
 adminRoutes.route('/settings', adminSettingsRoutes);
 
-function queuePublicStatusSnapshotRefresh(c: { env: Env; executionCtx: ExecutionContext }) {
+function queuePublicHomepageSnapshotRefresh(c: { env: Env; executionCtx: ExecutionContext }) {
   const now = Math.floor(Date.now() / 1000);
   c.executionCtx.waitUntil(
-    refreshPublicStatusSnapshot({
+    refreshPublicHomepageSnapshotIfNeeded({
       db: c.env.DB,
       now,
-      compute: () => computePublicStatusPayload(c.env.DB, Math.floor(Date.now() / 1000)),
+      compute: () => computePublicHomepagePayload(c.env.DB, Math.floor(Date.now() / 1000)),
     }).catch((err) => {
-      console.warn('public snapshot: refresh failed', err);
+      console.warn('homepage snapshot: refresh failed', err);
     }),
   );
 }
@@ -298,7 +298,7 @@ adminRoutes.post('/monitors/groups/reorder', async (c) => {
     .bind(...binds)
     .run();
 
-  queuePublicStatusSnapshotRefresh(c);
+  queuePublicHomepageSnapshotRefresh(c);
 
   return c.json({
     updated_groups: groups.length,
@@ -335,7 +335,7 @@ adminRoutes.post('/monitors/groups/assign', async (c) => {
     await syncGroupSortOrder(c.env.DB, targetGroupName, targetGroupSortOrder, now);
   }
 
-  queuePublicStatusSnapshotRefresh(c);
+  queuePublicHomepageSnapshotRefresh(c);
 
   return c.json({
     group_name: targetGroupName,
@@ -372,7 +372,7 @@ adminRoutes.put('/settings/uptime-rating', async (c) => {
     .bind('uptime_rating_level', String(input.uptime_rating_level))
     .run();
 
-  queuePublicStatusSnapshotRefresh(c);
+  queuePublicHomepageSnapshotRefresh(c);
 
   return c.json({ uptime_rating_level: input.uptime_rating_level });
 });
@@ -431,7 +431,7 @@ adminRoutes.post('/monitors', async (c) => {
     await syncGroupSortOrder(c.env.DB, groupName, groupSortOrder, now, inserted.id);
   }
 
-  queuePublicStatusSnapshotRefresh(c);
+  queuePublicHomepageSnapshotRefresh(c);
 
   return c.json({ monitor: monitorRowToApi(inserted, null) }, 201);
 });
@@ -537,7 +537,7 @@ adminRoutes.patch('/monitors/:id', async (c) => {
     await syncGroupSortOrder(c.env.DB, nextGroupName, nextGroupSortOrder, now, updated.id);
   }
 
-  queuePublicStatusSnapshotRefresh(c);
+  queuePublicHomepageSnapshotRefresh(c);
 
   return c.json({ monitor: monitorRowToApi(updated, null) });
 });
@@ -565,7 +565,7 @@ adminRoutes.delete('/monitors/:id', async (c) => {
     c.env.DB.prepare('DELETE FROM monitors WHERE id = ?1').bind(id),
   ]);
 
-  queuePublicStatusSnapshotRefresh(c);
+  queuePublicHomepageSnapshotRefresh(c);
 
   return c.json({ deleted: true });
 });
@@ -663,7 +663,7 @@ adminRoutes.post('/monitors/:id/pause', async (c) => {
 
   const state = await db.select().from(monitorState).where(eq(monitorState.monitorId, id)).get();
 
-  queuePublicStatusSnapshotRefresh(c);
+  queuePublicHomepageSnapshotRefresh(c);
 
   return c.json({ monitor: monitorRowToApi(monitor, state ?? null) });
 });
@@ -705,7 +705,7 @@ adminRoutes.post('/monitors/:id/resume', async (c) => {
 
   const state = await db.select().from(monitorState).where(eq(monitorState.monitorId, id)).get();
 
-  queuePublicStatusSnapshotRefresh(c);
+  queuePublicHomepageSnapshotRefresh(c);
 
   return c.json({ monitor: monitorRowToApi(monitor, state ?? null) });
 });
@@ -1302,7 +1302,7 @@ adminRoutes.post('/incidents', async (c) => {
     }),
   );
 
-  queuePublicStatusSnapshotRefresh(c);
+  queuePublicHomepageSnapshotRefresh(c);
 
   return c.json({ incident: incidentRowToApi(row, [], monitorIds) }, 201);
 });
@@ -1403,7 +1403,7 @@ adminRoutes.post('/incidents/:id/updates', async (c) => {
     }),
   );
 
-  queuePublicStatusSnapshotRefresh(c);
+  queuePublicHomepageSnapshotRefresh(c);
 
   return c.json({
     incident: incidentRowToApi(incidentRow, [], monitorIds),
@@ -1509,7 +1509,7 @@ adminRoutes.patch('/incidents/:id/resolve', async (c) => {
     }),
   );
 
-  queuePublicStatusSnapshotRefresh(c);
+  queuePublicHomepageSnapshotRefresh(c);
 
   return c.json({
     incident: incidentRowToApi(incidentRow, [], monitorIds),
@@ -1555,7 +1555,7 @@ adminRoutes.delete('/incidents/:id', async (c) => {
     ).bind(id),
   ]);
 
-  queuePublicStatusSnapshotRefresh(c);
+  queuePublicHomepageSnapshotRefresh(c);
 
   return c.json({ deleted: true });
 });
@@ -1630,7 +1630,7 @@ adminRoutes.post('/maintenance-windows', async (c) => {
     await c.env.DB.batch(linkStatements);
   }
 
-  queuePublicStatusSnapshotRefresh(c);
+  queuePublicHomepageSnapshotRefresh(c);
 
   return c.json({ maintenance_window: maintenanceWindowRowToApi(row, monitorIds) }, 201);
 });
@@ -1713,7 +1713,7 @@ adminRoutes.patch('/maintenance-windows/:id', async (c) => {
 
   const monitorIdsByWindowId = await listMaintenanceWindowMonitorIdsByWindowId(c.env.DB, [id]);
   const monitorIds = monitorIdsByWindowId.get(id) ?? [];
-  queuePublicStatusSnapshotRefresh(c);
+  queuePublicHomepageSnapshotRefresh(c);
 
   return c.json({ maintenance_window: maintenanceWindowRowToApi(updated, monitorIds) });
 });
@@ -1750,7 +1750,7 @@ adminRoutes.delete('/maintenance-windows/:id', async (c) => {
     ).bind(id),
   ]);
 
-  queuePublicStatusSnapshotRefresh(c);
+  queuePublicHomepageSnapshotRefresh(c);
 
   return c.json({ deleted: true });
 });

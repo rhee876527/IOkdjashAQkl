@@ -1,5 +1,6 @@
 const SNAPSHOT_MAX_AGE_SECONDS = 60;
 const PREFERRED_MAX_AGE_SECONDS = 30;
+const FALLBACK_HTML_MAX_AGE_SECONDS = 600;
 
 function acceptsHtml(request) {
   const accept = request.headers.get('Accept') || '';
@@ -144,9 +145,96 @@ function injectStatusMetaTags(html, snapshot, url) {
   return injected;
 }
 
+function monitorGroupLabel(value) {
+  if (typeof value !== 'string') return 'Ungrouped';
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : 'Ungrouped';
+}
+
+function uptimeBarClass(uptimePct) {
+  if (typeof uptimePct !== 'number') {
+    return 'bg-slate-300 dark:bg-slate-600';
+  }
+  if (uptimePct >= 99.95) return 'bg-emerald-500 dark:bg-emerald-400';
+  if (uptimePct >= 99) return 'bg-lime-500 dark:bg-lime-400';
+  if (uptimePct >= 95) return 'bg-amber-500 dark:bg-amber-400';
+  return 'bg-red-500 dark:bg-red-400';
+}
+
+function heartbeatBarClass(status) {
+  switch (status) {
+    case 'up':
+      return 'bg-emerald-500 dark:bg-emerald-400';
+    case 'down':
+      return 'bg-red-500 dark:bg-red-400';
+    case 'maintenance':
+      return 'bg-blue-500 dark:bg-blue-400';
+    default:
+      return 'bg-slate-300 dark:bg-slate-600';
+  }
+}
+
+function renderMiniUptimeBars(days) {
+  const items = Array.isArray(days) ? days.slice(-30) : [];
+  return items
+    .map(
+      (day) =>
+        `<span class="h-5 flex-1 rounded-sm ${uptimeBarClass(day?.uptime_pct)}" aria-hidden="true"></span>`,
+    )
+    .join('');
+}
+
+function renderMiniHeartbeatBars(heartbeats) {
+  const items = Array.isArray(heartbeats) ? heartbeats.slice(0, 30) : [];
+  return items
+    .map(
+      (heartbeat) =>
+        `<span class="h-5 flex-1 rounded-sm ${heartbeatBarClass(heartbeat?.status)}" aria-hidden="true"></span>`,
+    )
+    .join('');
+}
+
+function renderIncidentCard(incident) {
+  return `
+    <div class="ui-panel rounded-xl border border-slate-200/80 dark:border-slate-700/80 bg-white dark:bg-slate-800 p-4">
+      <div class="flex items-start justify-between gap-4 mb-2">
+        <h4 class="font-semibold text-slate-900 dark:text-slate-100">${escapeHtml(incident?.title ?? 'Incident')}</h4>
+        <span class="inline-flex items-center rounded-full font-medium ring-1 ring-inset px-2 py-0.5 text-xs ${statusBadgeClass(
+          incident?.impact === 'major' || incident?.impact === 'critical' ? 'down' : 'paused',
+        )}">${escapeHtml(incident?.impact ?? 'minor')}</span>
+      </div>
+      <div class="text-xs text-slate-500 dark:text-slate-400 mb-2">${escapeHtml(formatTime(incident?.started_at ?? 0))}</div>
+      ${
+        incident?.message
+          ? `<p class="text-sm text-slate-600 dark:text-slate-300">${escapeHtml(incident.message)}</p>`
+          : ''
+      }
+    </div>
+  `;
+}
+
+function renderMaintenanceCard(window, monitorNames) {
+  const affected = Array.isArray(window?.monitor_ids)
+    ? window.monitor_ids.map((id) => escapeHtml(monitorNames.get(id) || `#${id}`)).join(', ')
+    : '';
+
+  return `
+    <div class="ui-panel rounded-xl border border-slate-200/80 dark:border-slate-700/80 bg-white dark:bg-slate-800 p-4">
+      <div class="flex flex-col gap-2 mb-2">
+        <h4 class="font-semibold text-slate-900 dark:text-slate-100">${escapeHtml(window?.title ?? 'Maintenance')}</h4>
+        <div class="text-xs text-slate-500 dark:text-slate-400">${escapeHtml(formatTime(window?.starts_at ?? 0))} - ${escapeHtml(formatTime(window?.ends_at ?? 0))}</div>
+      </div>
+      ${affected ? `<div class="text-sm text-slate-600 dark:text-slate-300 mb-2">Affected: ${affected}</div>` : ''}
+      ${window?.message ? `<p class="text-sm text-slate-600 dark:text-slate-300">${escapeHtml(window.message)}</p>` : ''}
+    </div>
+  `;
+}
+
 function renderPreload(snapshot) {
   const overall = typeof snapshot.overall_status === 'string' ? snapshot.overall_status : 'unknown';
   const siteTitle = typeof snapshot.site_title === 'string' ? snapshot.site_title : 'Uptimer';
+  const siteDescription =
+    typeof snapshot.site_description === 'string' ? snapshot.site_description : '';
   const bannerTitle =
     snapshot && snapshot.banner && typeof snapshot.banner.title === 'string'
       ? snapshot.banner.title
@@ -157,46 +245,99 @@ function renderPreload(snapshot) {
       : Math.floor(Date.now() / 1000);
 
   const monitors = Array.isArray(snapshot.monitors) ? snapshot.monitors : [];
+  const monitorNames = new Map(
+    monitors.map((monitor) => [monitor.id, typeof monitor.name === 'string' ? monitor.name : `#${monitor.id}`]),
+  );
+  const groups = new Map();
+  for (const monitor of monitors) {
+    const key = monitorGroupLabel(monitor?.group_name);
+    const existing = groups.get(key) || [];
+    existing.push(monitor);
+    groups.set(key, existing);
+  }
 
-  const monitorCards = monitors
-    .map((m) => {
-      const id = typeof m.id === 'number' ? m.id : 0;
-      const name = escapeHtml(m.name ?? `#${id}`);
-      const type = escapeHtml(m.type ?? '');
-      const status = typeof m.status === 'string' ? m.status : 'unknown';
-      const lastCheckedAt = typeof m.last_checked_at === 'number' ? m.last_checked_at : null;
-
-      const lastChecked = lastCheckedAt
-        ? `Last checked: ${escapeHtml(formatTime(lastCheckedAt))}`
-        : 'Never checked';
-
-      return `
-        <div class="bg-white dark:bg-slate-800 rounded-xl border border-slate-100 dark:border-slate-700 shadow-soft dark:shadow-none p-4">
-          <div class="flex items-start justify-between mb-3">
-            <div class="flex items-center gap-2.5 min-w-0">
-              <span class="relative flex h-2.5 w-2.5"><span class="relative inline-flex h-2.5 w-2.5 rounded-full ${statusDotClass(
-                status,
-              )}"></span></span>
-              <div class="min-w-0">
-                <div class="font-semibold text-slate-900 dark:text-slate-100 truncate">${name}</div>
-                <div class="text-xs text-slate-500 dark:text-slate-400 uppercase tracking-wide">${type}</div>
-              </div>
-            </div>
-            <span class="inline-flex items-center rounded-full font-medium ring-1 ring-inset px-2 py-0.5 text-xs ${statusBadgeClass(
-              status,
-            )}">${escapeHtml(status)}</span>
+  const groupedMonitors = [...groups.entries()]
+    .map(
+      ([groupName, groupMonitors]) => `
+        <div>
+          <div class="mb-2 flex items-center justify-between">
+            <h4 class="text-sm font-semibold text-slate-600 dark:text-slate-300">${escapeHtml(groupName)}</h4>
+            <span class="text-xs text-slate-400 dark:text-slate-500">${groupMonitors.length}</span>
           </div>
-          <div class="text-xs text-slate-400 dark:text-slate-500">${lastChecked}</div>
+          <div class="grid gap-3 sm:grid-cols-2">
+            ${groupMonitors
+              .map((monitor) => {
+                const id = typeof monitor.id === 'number' ? monitor.id : 0;
+                const lastCheckedAt =
+                  typeof monitor.last_checked_at === 'number' ? monitor.last_checked_at : null;
+                const uptimePct =
+                  monitor?.uptime_30d && typeof monitor.uptime_30d.uptime_pct === 'number'
+                    ? `${monitor.uptime_30d.uptime_pct.toFixed(3)}%`
+                    : '-';
+
+                return `
+                  <div class="ui-panel rounded-xl border border-slate-200/80 dark:border-slate-700/80 bg-white dark:bg-slate-800 p-4">
+                    <div class="mb-3 flex items-start justify-between gap-2">
+                      <div class="min-w-0 flex items-center gap-2.5">
+                        <span class="relative flex h-2.5 w-2.5"><span class="relative inline-flex h-2.5 w-2.5 rounded-full ${statusDotClass(
+                          monitor?.status,
+                        )}"></span></span>
+                        <div class="min-w-0">
+                          <div class="truncate text-base font-semibold text-slate-900 dark:text-slate-100">${escapeHtml(monitor?.name ?? `#${id}`)}</div>
+                          <div class="mt-0.5 text-xs text-slate-500 dark:text-slate-400 uppercase tracking-wide">${escapeHtml(monitor?.type ?? '')}</div>
+                        </div>
+                      </div>
+                      <div class="flex items-center gap-2">
+                        <span class="text-xs text-slate-400 dark:text-slate-500">${escapeHtml(uptimePct)}</span>
+                        <span class="inline-flex items-center rounded-full font-medium ring-1 ring-inset px-2 py-0.5 text-xs ${statusBadgeClass(
+                          monitor?.status,
+                        )}">${escapeHtml(monitor?.status ?? 'unknown')}</span>
+                      </div>
+                    </div>
+
+                    <div class="mb-2">
+                      <div class="mb-2 text-[11px] text-slate-400 dark:text-slate-500">Availability (30d)</div>
+                      <div class="flex h-5 items-end gap-[2px] overflow-hidden">${renderMiniUptimeBars(
+                        monitor?.uptime_days,
+                      )}</div>
+                    </div>
+
+                    <div class="mt-2">
+                      <div class="mb-2 text-[11px] text-slate-400 dark:text-slate-500">Recent checks</div>
+                      <div class="flex h-5 items-end gap-[2px] overflow-hidden">${renderMiniHeartbeatBars(
+                        monitor?.heartbeats,
+                      )}</div>
+                    </div>
+
+                    <div class="mt-3 text-[11px] text-slate-400 dark:text-slate-500">${lastCheckedAt ? `Last checked: ${escapeHtml(formatTime(lastCheckedAt))}` : 'Never checked'}</div>
+                  </div>
+                `;
+              })
+              .join('')}
+          </div>
         </div>
-      `;
-    })
+      `,
+    )
     .join('');
+
+  const activeIncidents = Array.isArray(snapshot.active_incidents) ? snapshot.active_incidents : [];
+  const activeMaintenance = Array.isArray(snapshot?.maintenance_windows?.active)
+    ? snapshot.maintenance_windows.active
+    : [];
+  const upcomingMaintenance = Array.isArray(snapshot?.maintenance_windows?.upcoming)
+    ? snapshot.maintenance_windows.upcoming
+    : [];
+  const resolvedIncidentPreview = snapshot?.resolved_incident_preview ?? null;
+  const maintenanceHistoryPreview = snapshot?.maintenance_history_preview ?? null;
 
   return `
     <div class="min-h-screen bg-slate-50 dark:bg-slate-900">
-      <header class="bg-white dark:bg-slate-800 border-b border-slate-100 dark:border-slate-700">
-        <div class="max-w-5xl mx-auto px-4 py-4 flex justify-between items-center">
-          <div class="text-lg font-bold text-slate-900 dark:text-slate-100">${escapeHtml(siteTitle)}</div>
+      <header class="sticky top-0 z-20 border-b border-slate-200/70 bg-white/95 backdrop-blur dark:border-slate-700/80 dark:bg-slate-800/95">
+        <div class="mx-auto max-w-5xl px-4 py-4 flex justify-between items-center">
+          <div class="min-w-0">
+            <div class="text-lg font-bold text-slate-900 dark:text-slate-100">${escapeHtml(siteTitle)}</div>
+            ${siteDescription ? `<div class="text-sm text-slate-500 dark:text-slate-400 truncate">${escapeHtml(siteDescription)}</div>` : ''}
+          </div>
           <span class="inline-flex items-center rounded-full font-medium ring-1 ring-inset px-2.5 py-1 text-sm ${statusBadgeClass(
             overall,
           )}">${escapeHtml(overall)}</span>
@@ -209,7 +350,53 @@ function renderPreload(snapshot) {
           <div class="text-xs text-slate-400 dark:text-slate-500 mt-1">Updated: ${escapeHtml(formatTime(generatedAt))}</div>
         </div>
 
-        <div class="grid gap-4 sm:grid-cols-2">${monitorCards}</div>
+        ${
+          activeMaintenance.length > 0 || upcomingMaintenance.length > 0
+            ? `
+            <section class="mb-6">
+              <h3 class="text-base font-semibold text-slate-900 dark:text-slate-100 mb-3">Scheduled Maintenance</h3>
+              ${activeMaintenance.length > 0 ? `<div class="space-y-3 mb-4">${activeMaintenance.map((window) => renderMaintenanceCard(window, monitorNames)).join('')}</div>` : ''}
+              ${upcomingMaintenance.length > 0 ? `<div class="space-y-3">${upcomingMaintenance.map((window) => renderMaintenanceCard(window, monitorNames)).join('')}</div>` : ''}
+            </section>
+          `
+            : ''
+        }
+
+        ${
+          activeIncidents.length > 0
+            ? `
+            <section class="mb-6">
+              <h3 class="text-base font-semibold text-slate-900 dark:text-slate-100 mb-3">Active Incidents</h3>
+              <div class="space-y-3">${activeIncidents.map((incident) => renderIncidentCard(incident)).join('')}</div>
+            </section>
+          `
+            : ''
+        }
+
+        <section>
+          <h3 class="text-base font-semibold text-slate-900 dark:text-slate-100 mb-3">Services</h3>
+          <div class="space-y-5">${groupedMonitors}</div>
+        </section>
+
+        <section class="mt-6 pt-6 border-t border-slate-100 dark:border-slate-800 space-y-6">
+          <div>
+            <h3 class="text-base font-semibold text-slate-900 dark:text-slate-100 mb-3">Incident History</h3>
+            ${
+              resolvedIncidentPreview
+                ? renderIncidentCard(resolvedIncidentPreview)
+                : `<div class="ui-panel rounded-xl border border-slate-200/80 dark:border-slate-700/80 bg-white dark:bg-slate-800 p-6 text-center text-slate-500 dark:text-slate-400">No past incidents</div>`
+            }
+          </div>
+
+          <div>
+            <h3 class="text-base font-semibold text-slate-900 dark:text-slate-100 mb-3">Maintenance History</h3>
+            ${
+              maintenanceHistoryPreview
+                ? renderMaintenanceCard(maintenanceHistoryPreview, monitorNames)
+                : `<div class="ui-panel rounded-xl border border-slate-200/80 dark:border-slate-700/80 bg-white dark:bg-slate-800 p-6 text-center text-slate-500 dark:text-slate-400">No past maintenance</div>`
+            }
+          </div>
+        </section>
       </main>
     </div>
   `;
@@ -231,11 +418,11 @@ async function fetchIndexHtml(env, url) {
   return env.ASSETS.fetch(req);
 }
 
-async function fetchPublicStatusSnapshot(env) {
+async function fetchPublicHomepageSnapshot(env) {
   const apiOrigin = env.UPTIMER_API_ORIGIN;
   if (typeof apiOrigin !== 'string' || apiOrigin.length === 0) return null;
 
-  const statusUrl = new URL('/api/v1/public/status', apiOrigin);
+  const statusUrl = new URL('/api/v1/public/homepage', apiOrigin);
 
   // Keep HTML fast: if the API is slow, fall back to a static HTML shell.
   const controller = new AbortController();
@@ -271,14 +458,22 @@ export default {
     const isStatusPage = url.pathname === '/' || url.pathname === '/index.html';
     if (wantsHtml && isStatusPage) {
       const cacheKey = new Request(url.origin + '/', { method: 'GET' });
+      const fallbackCacheKey = new Request(url.origin + '/__uptimer_homepage_fallback__', {
+        method: 'GET',
+      });
       const cached = await caches.default.match(cacheKey);
       if (cached) return cached;
 
       const base = await fetchIndexHtml(env, url);
       const html = await base.text();
 
-      const snapshot = await fetchPublicStatusSnapshot(env);
+      const snapshot = await fetchPublicHomepageSnapshot(env);
       if (!snapshot) {
+        const fallback = await caches.default.match(fallbackCacheKey);
+        if (fallback) {
+          return fallback;
+        }
+
         const headers = new Headers(base.headers);
         headers.set('Content-Type', 'text/html; charset=utf-8');
         headers.append('Vary', 'Accept');
@@ -300,7 +495,7 @@ export default {
 
       injected = injected.replace(
         '</head>',
-        `  <script>globalThis.__UPTIMER_INITIAL_STATUS__=${safeJsonForInlineScript(snapshot)};</script>\n</head>`,
+        `  <script>globalThis.__UPTIMER_INITIAL_HOMEPAGE__=${safeJsonForInlineScript(snapshot)};</script>\n</head>`,
       );
 
       const headers = new Headers(base.headers);
@@ -311,7 +506,16 @@ export default {
 
       const resp = new Response(injected, { status: 200, headers });
 
-      ctx.waitUntil(caches.default.put(cacheKey, resp.clone()));
+      const fallbackHeaders = new Headers(headers);
+      fallbackHeaders.set('Cache-Control', `public, max-age=${FALLBACK_HTML_MAX_AGE_SECONDS}`);
+      const fallbackResp = new Response(injected, { status: 200, headers: fallbackHeaders });
+
+      ctx.waitUntil(
+        Promise.all([
+          caches.default.put(cacheKey, resp.clone()),
+          caches.default.put(fallbackCacheKey, fallbackResp),
+        ]),
+      );
       return resp;
     }
 

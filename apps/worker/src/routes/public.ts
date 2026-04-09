@@ -17,8 +17,11 @@ import {
   shouldIncludeStatusPageScopedItem,
 } from '../public/visibility';
 import {
+  applyHomepageCacheHeaders,
   applyStatusCacheHeaders,
+  readHomepageSnapshot,
   readStatusSnapshot,
+  readStaleHomepageSnapshot,
   toSnapshotPayload,
   writeStatusSnapshot,
 } from '../snapshots';
@@ -528,6 +531,25 @@ publicRoutes.get('/status', async (c) => {
 
     throw err;
   }
+});
+
+publicRoutes.get('/homepage', async (c) => {
+  const now = Math.floor(Date.now() / 1000);
+  const snapshot = await readHomepageSnapshot(c.env.DB, now);
+  if (snapshot) {
+    const res = c.json(snapshot.data);
+    applyHomepageCacheHeaders(res, snapshot.age);
+    return res;
+  }
+
+  const stale = await readStaleHomepageSnapshot(c.env.DB, now);
+  if (stale) {
+    const res = c.json(stale.data);
+    applyHomepageCacheHeaders(res, Math.min(60, stale.age));
+    return res;
+  }
+
+  throw new AppError(503, 'UNAVAILABLE', 'Homepage snapshot unavailable');
 });
 
 publicRoutes.get('/incidents', async (c) => {

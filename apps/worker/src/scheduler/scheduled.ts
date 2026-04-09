@@ -20,6 +20,8 @@ import {
 import { runTcpCheck } from '../monitor/tcp';
 import type { CheckOutcome } from '../monitor/types';
 import { dispatchWebhookToChannels, type WebhookChannel } from '../notify/webhook';
+import { computePublicHomepagePayload } from '../public/homepage';
+import { refreshPublicHomepageSnapshotIfNeeded } from '../snapshots';
 import { readSettings } from '../settings';
 import { acquireLease } from './lock';
 
@@ -582,6 +584,14 @@ function queueMonitorNotification(
 export async function runScheduledTick(env: Env, ctx: ExecutionContext): Promise<void> {
   const now = Math.floor(Date.now() / 1000);
   const checkedAt = Math.floor(now / 60) * 60;
+  const queueHomepageRefresh = () =>
+    refreshPublicHomepageSnapshotIfNeeded({
+      db: env.DB,
+      now,
+      compute: () => computePublicHomepagePayload(env.DB, Math.floor(Date.now() / 1000)),
+    }).catch((err) => {
+      console.warn('homepage snapshot: refresh failed', err);
+    });
 
   const acquired = await acquireLease(env.DB, LOCK_NAME, now, LOCK_LEASE_SECONDS);
   if (!acquired) {
@@ -672,9 +682,8 @@ export async function runScheduledTick(env: Env, ctx: ExecutionContext): Promise
     }
   }
 
-  // Public status snapshots are refreshed by the /status request path and admin write paths.
-  // Keep scheduled focused on probing, persistence, and notifications.
   if (due.length === 0) {
+    ctx.waitUntil(queueHomepageRefresh());
     return;
   }
 
@@ -717,4 +726,6 @@ export async function runScheduledTick(env: Env, ctx: ExecutionContext): Promise
   } else {
     console.log(`scheduled: processed ${settled.length} monitors at ${checkedAt}`);
   }
+
+  ctx.waitUntil(queueHomepageRefresh());
 }

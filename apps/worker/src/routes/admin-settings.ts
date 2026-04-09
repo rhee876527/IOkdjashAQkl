@@ -2,21 +2,21 @@ import { Hono } from 'hono';
 
 import type { Env } from '../env';
 import { AppError } from '../middleware/errors';
-import { computePublicStatusPayload } from '../public/status';
-import { refreshPublicStatusSnapshot } from '../snapshots';
+import { computePublicHomepagePayload } from '../public/homepage';
+import { refreshPublicHomepageSnapshotIfNeeded } from '../snapshots';
 import { parseSettingsPatch, patchSettings, readSettings } from '../settings';
 
 export const adminSettingsRoutes = new Hono<{ Bindings: Env }>();
 
-function queuePublicStatusSnapshotRefresh(c: { env: Env; executionCtx: ExecutionContext }) {
+function queuePublicHomepageSnapshotRefresh(c: { env: Env; executionCtx: ExecutionContext }) {
   const now = Math.floor(Date.now() / 1000);
   c.executionCtx.waitUntil(
-    refreshPublicStatusSnapshot({
+    refreshPublicHomepageSnapshotIfNeeded({
       db: c.env.DB,
       now,
-      compute: () => computePublicStatusPayload(c.env.DB, Math.floor(Date.now() / 1000)),
+      compute: () => computePublicHomepagePayload(c.env.DB, Math.floor(Date.now() / 1000)),
     }).catch((err) => {
-      console.warn('public snapshot: refresh failed', err);
+      console.warn('homepage snapshot: refresh failed', err);
     }),
   );
 }
@@ -34,7 +34,7 @@ adminSettingsRoutes.patch('/', async (c) => {
   const patch = parseSettingsPatch(rawBody);
   await patchSettings(c.env.DB, patch);
 
-  queuePublicStatusSnapshotRefresh(c);
+  queuePublicHomepageSnapshotRefresh(c);
 
   const settings = await readSettings(c.env.DB);
   return c.json({ settings });

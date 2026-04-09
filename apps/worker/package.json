@@ -12,6 +12,7 @@
     "test:cron": "vitest run --config vitest.config.ts test/scheduled.test.ts --coverage --coverage.include=src/scheduler/scheduled.ts --coverage.reportsDirectory=coverage-cron --coverage.thresholds.lines=80 --coverage.thresholds.functions=100 --coverage.thresholds.statements=80 --coverage.thresholds.branches=55",
     "test:watch": "vitest --config vitest.config.ts",
     "bench:scheduler": "node ./scripts/bench-scheduler.mjs",
+    "bench:homepage": "node ./node_modules/vitest/vitest.mjs run --config vitest.bench.config.ts test/homepage-snapshot.bench.ts --reporter=dot",
     "migrate:local": "CI=1 wrangler d1 migrations apply uptimer --local",
     "init:local": "pnpm migrate:local && pnpm seed:local",
     "seed:local": "wrangler d1 execute uptimer --local --file ./scripts/seed-local.sql"

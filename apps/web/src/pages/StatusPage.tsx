@@ -6,13 +6,17 @@ import { useI18n } from '../app/I18nContext';
 import { useApplyServerLocaleSetting } from '../app/useApplyServerLocaleSetting';
 import {
   fetchLatency,
+  fetchHomepage,
   fetchPublicDayContext,
-  fetchPublicIncidents,
-  fetchPublicMaintenanceWindows,
+  fetchPublicIncidentDetail,
   fetchPublicMonitorOutages,
-  fetchStatus,
 } from '../api/client';
-import type { Incident, MaintenanceWindow, Outage, StatusResponse } from '../api/types';
+import type {
+  Incident,
+  IncidentSummary,
+  Outage,
+  PublicHomepageResponse,
+} from '../api/types';
 import { DayDowntimeModal } from '../components/DayDowntimeModal';
 import { Markdown } from '../components/Markdown';
 import { MonitorCard } from '../components/MonitorCard';
@@ -20,12 +24,8 @@ import { incidentImpactLabel, incidentStatusLabel } from '../i18n/labels';
 import { formatDateTime, getBrowserTimeZone } from '../utils/datetime';
 import { Badge, Card, MODAL_OVERLAY_CLASS, MODAL_PANEL_CLASS, ThemeToggle } from '../components/ui';
 
-type MaintenanceHistoryPreview = Pick<
-  MaintenanceWindow,
-  'id' | 'title' | 'message' | 'starts_at' | 'ends_at' | 'monitor_ids'
->;
-
-type BannerStatus = StatusResponse['banner']['status'];
+type BannerStatus = PublicHomepageResponse['banner']['status'];
+type IncidentCardData = IncidentSummary | Incident;
 
 const LatencyChart = lazy(async () => {
   const mod = await import('../components/LatencyChart');
@@ -149,7 +149,7 @@ function IncidentCard({
   onClick,
   timeZone,
 }: {
-  incident: Incident;
+  incident: IncidentCardData;
   onClick: () => void;
   timeZone: string;
 }) {
@@ -192,11 +192,15 @@ function IncidentDetail({
   monitorNames,
   onClose,
   timeZone,
+  isLoadingDetails,
+  hasDetailsError,
 }: {
   incident: Incident;
   monitorNames: Map<number, string>;
   onClose: () => void;
   timeZone: string;
+  isLoadingDetails: boolean;
+  hasDetailsError: boolean;
 }) {
   const { locale, t } = useI18n();
 
@@ -243,7 +247,13 @@ function IncidentDetail({
               {t('common.affected')}:
             </span>
             <span className="text-sm">
-              {incident.monitor_ids.map((id) => monitorNames.get(id) ?? `#${id}`).join(', ')}
+              {incident.monitor_ids.length > 0
+                ? incident.monitor_ids.map((id) => monitorNames.get(id) ?? `#${id}`).join(', ')
+                : isLoadingDetails
+                  ? t('common.loading')
+                  : hasDetailsError
+                    ? t('status_page.failed_load_data')
+                    : '-'}
             </span>
           </div>
           <div className="flex flex-col sm:flex-row sm:gap-2">
@@ -285,6 +295,18 @@ function IncidentDetail({
               <Markdown text={u.message} />
             </div>
           ))}
+
+          {incident.updates.length === 0 && isLoadingDetails && (
+            <div className="text-sm text-slate-500 dark:text-slate-400">
+              {t('common.loading')}
+            </div>
+          )}
+
+          {incident.updates.length === 0 && hasDetailsError && (
+            <div className="text-sm text-red-600 dark:text-red-400">
+              {t('status_page.failed_load_data')}
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -336,21 +358,24 @@ function StatusPageSkeleton() {
 export function StatusPage() {
   const { locale, t } = useI18n();
   const [selectedMonitorId, setSelectedMonitorId] = useState<number | null>(null);
-  const [selectedIncident, setSelectedIncident] = useState<Incident | null>(null);
+  const [selectedIncidentRequest, setSelectedIncidentRequest] = useState<{
+    incident: IncidentCardData;
+    resolvedOnly: boolean;
+  } | null>(null);
   const [selectedDay, setSelectedDay] = useState<{ monitorId: number; dayStartAt: number } | null>(
     null,
   );
 
-  const statusQuery = useQuery({
-    queryKey: ['status'],
-    queryFn: fetchStatus,
+  const homepageQuery = useQuery({
+    queryKey: ['homepage'],
+    queryFn: fetchHomepage,
     refetchInterval: 30_000,
   });
 
-  const derivedTitle = statusQuery.data?.site_title || 'Uptimer';
-  const derivedTimeZone = getBrowserTimeZone() || statusQuery.data?.site_timezone || 'UTC';
+  const derivedTitle = homepageQuery.data?.site_title || 'Uptimer';
+  const derivedTimeZone = getBrowserTimeZone() || homepageQuery.data?.site_timezone || 'UTC';
 
-  useApplyServerLocaleSetting(statusQuery.data?.site_locale);
+  useApplyServerLocaleSetting(homepageQuery.data?.site_locale);
 
   useEffect(() => {
     document.title = derivedTitle;
@@ -378,35 +403,38 @@ export function StatusPage() {
     return all.filter((o) => o.started_at < dayEnd && (o.ended_at ?? dayEnd) > dayStart);
   }, [outagesQuery.data?.outages, selectedDay]);
 
-  const resolvedHistoryQuery = useQuery({
-    queryKey: ['public-incidents', 'resolved', 'preview'],
-    queryFn: () => fetchPublicIncidents(1, undefined, { resolvedOnly: true }),
-    enabled: statusQuery.isSuccess,
+  const incidentDetailQuery = useQuery({
+    queryKey: [
+      'public-incident-detail',
+      selectedIncidentRequest?.incident.id,
+      selectedIncidentRequest?.resolvedOnly,
+    ],
+    queryFn: () => {
+      const resolvedOnly = selectedIncidentRequest?.resolvedOnly;
+      return fetchPublicIncidentDetail(
+        selectedIncidentRequest?.incident.id as number,
+        resolvedOnly === undefined ? {} : { resolvedOnly },
+      );
+    },
+    enabled: selectedIncidentRequest !== null,
   });
 
-  const maintenanceHistoryQuery = useQuery({
-    queryKey: ['public-maintenance-windows', 'history', 'preview'],
-    queryFn: () => fetchPublicMaintenanceWindows(1),
-    enabled: statusQuery.isSuccess,
-  });
+  const selectedIncident =
+    incidentDetailQuery.data ??
+    (selectedIncidentRequest
+      ? {
+          ...selectedIncidentRequest.incident,
+          monitor_ids: [],
+          updates: [],
+        }
+      : null);
 
-  const resolvedIncidentPreview = resolvedHistoryQuery.data?.incidents[0] ?? null;
-  const maintenanceHistoryPreview = maintenanceHistoryQuery.data?.maintenance_windows[0] ?? null;
-
-  const maintenanceHistoryPreviewSafe: MaintenanceHistoryPreview | null = maintenanceHistoryPreview
-    ? {
-        id: maintenanceHistoryPreview.id,
-        title: maintenanceHistoryPreview.title,
-        message: maintenanceHistoryPreview.message,
-        starts_at: maintenanceHistoryPreview.starts_at,
-        ends_at: maintenanceHistoryPreview.ends_at,
-        monitor_ids: maintenanceHistoryPreview.monitor_ids,
-      }
-    : null;
+  const resolvedIncidentPreview = homepageQuery.data?.resolved_incident_preview ?? null;
+  const maintenanceHistoryPreview = homepageQuery.data?.maintenance_history_preview ?? null;
 
   const groupedMonitors = useMemo(() => {
-    const groups = new Map<string, StatusResponse['monitors']>();
-    for (const monitor of statusQuery.data?.monitors ?? []) {
+    const groups = new Map<string, PublicHomepageResponse['monitors']>();
+    for (const monitor of homepageQuery.data?.monitors ?? []) {
       const key = monitorGroupLabel(monitor.group_name, t('status_page.group_ungrouped'));
       const list = groups.get(key) ?? [];
       list.push(monitor);
@@ -414,17 +442,17 @@ export function StatusPage() {
     }
 
     return [...groups.entries()].map(([name, monitors]) => ({ name, monitors }));
-  }, [statusQuery.data?.monitors, t]);
+  }, [homepageQuery.data?.monitors, t]);
   const monitorNames = useMemo(
-    () => new Map((statusQuery.data?.monitors ?? []).map((m) => [m.id, m.name] as const)),
-    [statusQuery.data?.monitors],
+    () => new Map((homepageQuery.data?.monitors ?? []).map((m) => [m.id, m.name] as const)),
+    [homepageQuery.data?.monitors],
   );
 
-  if (statusQuery.isLoading) {
+  if (homepageQuery.isLoading && !homepageQuery.data) {
     return <StatusPageSkeleton />;
   }
 
-  if (!statusQuery.data) {
+  if (!homepageQuery.data) {
     return (
       <div className="min-h-screen bg-slate-50 dark:bg-slate-900 flex items-center justify-center">
         <div className="text-center">
@@ -437,7 +465,7 @@ export function StatusPage() {
     );
   }
 
-  const data = statusQuery.data;
+  const data = homepageQuery.data;
   const bannerConfig = getBannerConfig(data.banner.status, t);
   const activeIncidents = data.active_incidents;
 
@@ -610,7 +638,12 @@ export function StatusPage() {
                   key={it.id}
                   incident={it}
                   timeZone={timeZone}
-                  onClick={() => setSelectedIncident(it)}
+                  onClick={() =>
+                    setSelectedIncidentRequest({
+                      incident: it,
+                      resolvedOnly: false,
+                    })
+                  }
                 />
               ))}
             </div>
@@ -638,6 +671,7 @@ export function StatusPage() {
                     <MonitorCard
                       key={monitor.id}
                       monitor={monitor}
+                      ratingLevel={data.uptime_rating_level}
                       timeZone={timeZone}
                       onSelect={() => setSelectedMonitorId(monitor.id)}
                       onDayClick={(dayStartAt) =>
@@ -670,19 +704,16 @@ export function StatusPage() {
               </Link>
             </div>
 
-            {resolvedHistoryQuery.isLoading || resolvedHistoryQuery.isFetching ? (
-              <div className="ui-skeleton h-28 rounded-xl border border-slate-200/70 dark:border-slate-700/70" />
-            ) : resolvedHistoryQuery.isError ? (
-              <Card className="p-6 text-center">
-                <p className="text-sm text-red-600 dark:text-red-400">
-                  {t('status_page.failed_load_incident_history')}
-                </p>
-              </Card>
-            ) : resolvedIncidentPreview ? (
+            {resolvedIncidentPreview ? (
               <IncidentCard
                 incident={resolvedIncidentPreview}
                 timeZone={timeZone}
-                onClick={() => setSelectedIncident(resolvedIncidentPreview)}
+                onClick={() =>
+                  setSelectedIncidentRequest({
+                    incident: resolvedIncidentPreview,
+                    resolvedOnly: true,
+                  })
+                }
               />
             ) : (
               <Card className="p-6 text-center">
@@ -706,34 +737,22 @@ export function StatusPage() {
               </Link>
             </div>
 
-            {maintenanceHistoryQuery.isLoading || maintenanceHistoryQuery.isFetching ? (
-              <div className="ui-skeleton h-28 rounded-xl border border-slate-200/70 dark:border-slate-700/70" />
-            ) : maintenanceHistoryQuery.isError ? (
-              <Card className="p-6 text-center">
-                <p className="text-sm text-red-600 dark:text-red-400">
-                  {t('status_page.failed_load_maintenance_history')}
-                </p>
-              </Card>
-            ) : maintenanceHistoryPreviewSafe ? (
+            {maintenanceHistoryPreview ? (
               <Card className="p-4 sm:p-5">
                 <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2 sm:gap-4 mb-2">
                   <h4 className="font-semibold text-slate-900 dark:text-slate-100">
-                    {maintenanceHistoryPreviewSafe.title}
+                    {maintenanceHistoryPreview.title}
                   </h4>
                   <span className="text-xs text-slate-500 dark:text-slate-400 whitespace-nowrap">
-                    {formatDateTime(maintenanceHistoryPreviewSafe.starts_at, timeZone, locale)} –{' '}
-                    {formatDateTime(maintenanceHistoryPreviewSafe.ends_at, timeZone, locale)}
+                    {formatDateTime(maintenanceHistoryPreview.starts_at, timeZone, locale)} –{' '}
+                    {formatDateTime(maintenanceHistoryPreview.ends_at, timeZone, locale)}
                   </span>
                 </div>
                 <div className="text-sm text-slate-600 dark:text-slate-300 mb-2">
                   {t('common.affected')}:{' '}
-                  {maintenanceHistoryPreviewSafe.monitor_ids
-                    .map((id) => monitorNames.get(id) ?? `#${id}`)
-                    .join(', ')}
+                  {maintenanceHistoryPreview.monitor_ids.map((id) => monitorNames.get(id) ?? `#${id}`).join(', ')}
                 </div>
-                {maintenanceHistoryPreviewSafe.message && (
-                  <Markdown text={maintenanceHistoryPreviewSafe.message} />
-                )}
+                {maintenanceHistoryPreview.message && <Markdown text={maintenanceHistoryPreview.message} />}
               </Card>
             ) : (
               <Card className="p-6 text-center">
@@ -763,7 +782,9 @@ export function StatusPage() {
           incident={selectedIncident}
           monitorNames={monitorNames}
           timeZone={timeZone}
-          onClose={() => setSelectedIncident(null)}
+          isLoadingDetails={incidentDetailQuery.isLoading}
+          hasDetailsError={incidentDetailQuery.isError}
+          onClose={() => setSelectedIncidentRequest(null)}
         />
       )}
 

@@ -53,7 +53,9 @@ function sanitizeLabel(raw) {
 }
 
 function resolveBaselineRef() {
-  return process.env.SCHEDULER_BENCH_BASE_REF ?? 'HEAD';
+  return (
+    process.env.SCHEDULER_BENCH_BASE_REF ?? 'aef3f045c4c694f8440d08ba020548eed94f82db'
+  );
 }
 
 function createOutputPath(label) {

@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 
-import type { UptimeDay, UptimeRatingLevel } from '../api/types';
+import type { UptimeDayPreview, UptimeRatingLevel } from '../api/types';
 import { useI18n } from '../app/I18nContext';
 import { formatDate } from '../utils/datetime';
 import { getUptimeBgClasses, getUptimeTier } from '../utils/uptime';
@@ -9,7 +9,7 @@ import { getUptimeBgClasses, getUptimeTier } from '../utils/uptime';
 type DowntimeInterval = { start: number; end: number };
 
 interface UptimeBar30dProps {
-  days: UptimeDay[];
+  days: UptimeDayPreview[];
   ratingLevel?: UptimeRatingLevel;
   maxBars?: number;
   timeZone: string;
@@ -91,7 +91,7 @@ function mergeIntervals(intervals: DowntimeInterval[]): DowntimeInterval[] {
 }
 
 interface TooltipState {
-  day: UptimeDay;
+  day: UptimeDayPreview;
   slotKey: string;
   position: { x: number; y: number };
 }
@@ -102,7 +102,7 @@ function Tooltip({
   ratingLevel,
   timeZone,
 }: {
-  day: UptimeDay;
+  day: UptimeDayPreview;
   position: { x: number; y: number };
   ratingLevel: UptimeRatingLevel;
   timeZone: string;
@@ -172,7 +172,7 @@ export function UptimeBar30d({
         const day = sourceDays[mappedIndex];
         if (!day) return null;
         return { day, slotKey: `${day.day_start_at}-${slot}` };
-      }).filter((entry): entry is { day: UptimeDay; slotKey: string } => entry !== null);
+      }).filter((entry): entry is { day: UptimeDayPreview; slotKey: string } => entry !== null);
     }
 
     return sourceDays.map((day) => ({ day, slotKey: `${day.day_start_at}` }));
@@ -181,7 +181,7 @@ export function UptimeBar30d({
   // Ensure stable layout in default mode when fewer bars are available.
   const emptyCount = fillMode === 'stretch' ? 0 : Math.max(0, maxBars - displayBars.length);
 
-  const handleMouseEnter = (d: UptimeDay, slotKey: string, e: React.MouseEvent) => {
+  const handleMouseEnter = (d: UptimeDayPreview, slotKey: string, e: React.MouseEvent) => {
     const rect = e.currentTarget.getBoundingClientRect();
     setTooltip({
       day: d,

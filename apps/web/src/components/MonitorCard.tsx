@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 
-import type { PublicMonitor } from '../api/types';
+import type { HomepageMonitorCard, PublicMonitor, UptimeRatingLevel } from '../api/types';
 import { useI18n } from '../app/I18nContext';
 import { statusLabel } from '../i18n/labels';
 import { HeartbeatBar } from './HeartbeatBar';
@@ -19,7 +19,11 @@ const HEARTBEAT_BARS = 60;
 const AVAILABILITY_BARS = 60;
 
 export interface MonitorCardProps {
-  monitor: PublicMonitor;
+  monitor: Pick<
+    PublicMonitor | HomepageMonitorCard,
+    'id' | 'name' | 'type' | 'status' | 'is_stale' | 'last_checked_at' | 'heartbeats' | 'uptime_30d' | 'uptime_days'
+  >;
+  ratingLevel: UptimeRatingLevel;
   timeZone: string;
   onSelect: () => void;
   onDayClick: (dayStartAt: number) => void;
@@ -55,7 +59,13 @@ function getHeartbeatLatencyStats(heartbeats: PublicMonitor['heartbeats']): {
   return { fastestMs, avgMs, slowestMs };
 }
 
-export function MonitorCard({ monitor, onSelect, onDayClick, timeZone }: MonitorCardProps) {
+export function MonitorCard({
+  monitor,
+  ratingLevel,
+  onSelect,
+  onDayClick,
+  timeZone,
+}: MonitorCardProps) {
   const { locale, t } = useI18n();
   const uptime30d = monitor.uptime_30d;
   const checkedAt = monitor.last_checked_at
@@ -68,7 +78,7 @@ export function MonitorCard({ monitor, onSelect, onDayClick, timeZone }: Monitor
     [monitor.heartbeats],
   );
 
-  const tier = uptime30d ? getUptimeTier(uptime30d.uptime_pct, monitor.uptime_rating_level) : null;
+  const tier = uptime30d ? getUptimeTier(uptime30d.uptime_pct, ratingLevel) : null;
 
   return (
     <Card hover onClick={onSelect} className="p-3 sm:p-4">
@@ -114,7 +124,7 @@ export function MonitorCard({ monitor, onSelect, onDayClick, timeZone }: Monitor
         </div>
         <UptimeBar30d
           days={monitor.uptime_days}
-          ratingLevel={monitor.uptime_rating_level}
+          ratingLevel={ratingLevel}
           maxBars={AVAILABILITY_BARS}
           timeZone={timeZone}
           onDayClick={onDayClick}

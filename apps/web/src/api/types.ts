@@ -76,6 +76,17 @@ export interface UptimeDay {
   uptime_pct: number | null;
 }
 
+export interface UptimeDayPreview {
+  day_start_at: number;
+  downtime_sec: number;
+  unknown_sec: number;
+  uptime_pct: number | null;
+}
+
+export interface UptimeSummaryPreview {
+  uptime_pct: number;
+}
+
 export interface PublicMonitor {
   id: number;
   name: string;
@@ -124,6 +135,58 @@ export interface StatusResponse {
     active: MaintenanceWindow[];
     upcoming: MaintenanceWindow[];
   };
+}
+
+export interface IncidentSummary {
+  id: number;
+  title: string;
+  status: IncidentStatus;
+  impact: IncidentImpact;
+  message: string | null;
+  started_at: number;
+  resolved_at: number | null;
+}
+
+export interface MaintenanceWindowPreview {
+  id: number;
+  title: string;
+  message: string | null;
+  starts_at: number;
+  ends_at: number;
+  monitor_ids: number[];
+}
+
+export interface HomepageMonitorCard {
+  id: number;
+  name: string;
+  type: MonitorType;
+  group_name: string | null;
+  status: MonitorStatus;
+  is_stale: boolean;
+  last_checked_at: number | null;
+  heartbeats: Heartbeat[];
+  uptime_30d: UptimeSummaryPreview | null;
+  uptime_days: UptimeDayPreview[];
+}
+
+export interface PublicHomepageResponse {
+  generated_at: number;
+  site_title: string;
+  site_description: string;
+  site_locale: LocaleSetting;
+  site_timezone: string;
+  uptime_rating_level: UptimeRatingLevel;
+  overall_status: MonitorStatus;
+  banner: StatusResponse['banner'];
+  summary: StatusResponse['summary'];
+  monitors: HomepageMonitorCard[];
+  active_incidents: IncidentSummary[];
+  maintenance_windows: {
+    active: MaintenanceWindowPreview[];
+    upcoming: MaintenanceWindowPreview[];
+  };
+  resolved_incident_preview: IncidentSummary | null;
+  maintenance_history_preview: MaintenanceWindowPreview | null;
 }
 
 export interface LatencyPoint {
