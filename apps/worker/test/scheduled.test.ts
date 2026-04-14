@@ -18,8 +18,8 @@ vi.mock('../src/notify/webhook', () => ({
 vi.mock('../src/public/homepage', () => ({
   computePublicHomepagePayload: vi.fn(),
 }));
-vi.mock('../src/snapshots', () => ({
-  refreshPublicHomepageSnapshot: vi.fn(),
+vi.mock('../src/snapshots/public-homepage', () => ({
+  refreshPublicHomepageSnapshotIfNeeded: vi.fn(),
 }));
 
 import type { Env } from '../src/env';
@@ -29,7 +29,7 @@ import { dispatchWebhookToChannels } from '../src/notify/webhook';
 import { computePublicHomepagePayload } from '../src/public/homepage';
 import { runScheduledTick } from '../src/scheduler/scheduled';
 import { acquireLease } from '../src/scheduler/lock';
-import { refreshPublicHomepageSnapshot } from '../src/snapshots';
+import { refreshPublicHomepageSnapshotIfNeeded } from '../src/snapshots/public-homepage';
 import { readSettings } from '../src/settings';
 import { createFakeD1Database, type FakeD1QueryHandler } from './helpers/fake-d1';
 
@@ -160,7 +160,7 @@ describe('scheduler/scheduled regression', () => {
       resolved_incident_preview: null,
       maintenance_history_preview: null,
     } as never);
-    vi.mocked(refreshPublicHomepageSnapshot).mockResolvedValue(undefined);
+    vi.mocked(refreshPublicHomepageSnapshotIfNeeded).mockResolvedValue(false);
     vi.mocked(runHttpCheck).mockResolvedValue({
       status: 'up',
       latencyMs: 21,
@@ -205,40 +205,19 @@ describe('scheduler/scheduled regression', () => {
     expect(readSettings).toHaveBeenCalledTimes(1);
     expect(waitUntil).toHaveBeenCalledTimes(1);
     await Promise.all(waitUntil.mock.calls.map((call) => call[0] as Promise<unknown>));
-    expect(refreshPublicHomepageSnapshot).toHaveBeenCalledWith({
+    expect(refreshPublicHomepageSnapshotIfNeeded).toHaveBeenCalledWith({
       db: env.DB,
       now: expectedNow,
       compute: expect.any(Function),
     });
-    const refreshArgs = vi.mocked(refreshPublicHomepageSnapshot).mock.calls[0]?.[0];
+    const refreshArgs = vi.mocked(refreshPublicHomepageSnapshotIfNeeded).mock.calls[0]?.[0];
     expect(refreshArgs).toBeDefined();
     await refreshArgs?.compute();
     expect(computePublicHomepagePayload).toHaveBeenCalledWith(env.DB, expectedNow);
   });
 
-  it('self-invokes homepage refresh via service binding when SELF is configured', async () => {
-    const env = createEnv({ dueRows: [] }) as unknown as Env;
-    env.ADMIN_TOKEN = 'test-admin-token';
-    const selfFetch = vi.fn().mockResolvedValueOnce(new Response('ok', { status: 200 }));
-    env.SELF = { fetch: selfFetch } as unknown as Fetcher;
-    const waitUntil = vi.fn();
-
-    await runScheduledTick(env, { waitUntil } as unknown as ExecutionContext);
-
-    expect(waitUntil).toHaveBeenCalledTimes(1);
-    await Promise.all(waitUntil.mock.calls.map((call) => call[0] as Promise<unknown>));
-
-    expect(selfFetch).toHaveBeenCalledTimes(1);
-    const req = selfFetch.mock.calls[0]?.[0] as Request;
-    expect(req).toBeInstanceOf(Request);
-    expect(req.method).toBe('POST');
-    expect(new URL(req.url).pathname).toBe('/api/v1/internal/refresh/homepage');
-    expect(await req.text()).toBe('test-admin-token');
-    expect(refreshPublicHomepageSnapshot).not.toHaveBeenCalled();
-  });
-
   it('logs homepage snapshot refresh failures without breaking the tick', async () => {
-    vi.mocked(refreshPublicHomepageSnapshot).mockRejectedValueOnce(
+    vi.mocked(refreshPublicHomepageSnapshotIfNeeded).mockRejectedValueOnce(
       new Error('snapshot refresh failed'),
     );
 
@@ -333,7 +312,7 @@ describe('scheduler/scheduled regression', () => {
 
     expect(waitUntil).toHaveBeenCalledTimes(1);
     await Promise.all(waitUntil.mock.calls.map((call) => call[0] as Promise<unknown>));
-    expect(refreshPublicHomepageSnapshot).toHaveBeenCalledTimes(1);
+    expect(refreshPublicHomepageSnapshotIfNeeded).toHaveBeenCalledTimes(1);
   });
 
   it('passes explicit response assertion modes through scheduled HTTP checks', async () => {
