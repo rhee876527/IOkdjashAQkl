@@ -169,6 +169,18 @@ describe('computePublicHomepagePayload', () => {
         raw: () => [],
       },
       {
+        match: 'with input(monitor_id, interval_sec, created_at, last_checked_at) as (',
+        all: () => [
+          {
+            monitor_id: 1,
+            start_at: now - 120,
+            total_sec: 120,
+            downtime_sec: 0,
+            unknown_sec: 0,
+          },
+        ],
+      },
+      {
         match: 'select monitor_id, started_at, ended_at',
         all: () => [],
       },

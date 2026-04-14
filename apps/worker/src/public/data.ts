@@ -114,6 +114,16 @@ export const STATUS_UPCOMING_MAINTENANCE_LIMIT = 5;
 
 const UPTIME_DAYS = 30;
 const HEARTBEAT_POINTS = 60;
+const D1_MAX_SQL_VARIABLES = 100;
+const TODAY_PARTIAL_UPTIME_FIXED_BINDINGS = 2;
+const TODAY_PARTIAL_UPTIME_BINDINGS_PER_MONITOR = 4;
+const TODAY_PARTIAL_UPTIME_SQL_CHUNK_SIZE = Math.max(
+  1,
+  Math.floor(
+    (D1_MAX_SQL_VARIABLES - TODAY_PARTIAL_UPTIME_FIXED_BINDINGS) /
+      TODAY_PARTIAL_UPTIME_BINDINGS_PER_MONITOR,
+  ),
+);
 
 function appendMapValue<K, V>(map: Map<K, V[]>, key: K, value: V): void {
   const existing = map.get(key);
@@ -458,9 +468,12 @@ async function computeTodayPartialUptimeBatchSql(
     });
   }
 
-  const CHUNK_SIZE = 200;
-  for (let start = 0; start < normalizedMonitors.length; start += CHUNK_SIZE) {
-    const chunk = normalizedMonitors.slice(start, start + CHUNK_SIZE);
+  for (
+    let start = 0;
+    start < normalizedMonitors.length;
+    start += TODAY_PARTIAL_UPTIME_SQL_CHUNK_SIZE
+  ) {
+    const chunk = normalizedMonitors.slice(start, start + TODAY_PARTIAL_UPTIME_SQL_CHUNK_SIZE);
     const valuesPlaceholders = chunk
       .map((_, index) => {
         const base = 3 + index * 4;
