@@ -4,7 +4,7 @@ import type { Trace } from './observability/trace';
 import {
   applyHomepageCacheHeaders,
   readHomepageSnapshotArtifactJson,
-  readHomepageSnapshotJson,
+  readHomepageSnapshotJsonAnyAge,
   readStaleHomepageSnapshotArtifactJson,
 } from './snapshots/public-homepage-read';
 import {
@@ -15,6 +15,7 @@ import {
 
 const CORS_ALLOW_METHODS = 'GET,POST,PUT,PATCH,DELETE,OPTIONS';
 const CORS_ALLOW_HEADERS = 'Authorization,Content-Type';
+const HOMEPAGE_STALE_GRACE_SECONDS = 2 * 60;
 
 function appendVaryHeader(headers: Headers, value: string): void {
   const next = value.trim();
@@ -191,17 +192,17 @@ async function handlePublicHomepage(req: Request, env: Env, ctx: ExecutionContex
   const snapshot = trace
     ? await trace.timeAsync(
         'homepage_snapshot_read',
-        () => readHomepageSnapshotJson(env.DB, now),
+        () => readHomepageSnapshotJsonAnyAge(env.DB, now, HOMEPAGE_STALE_GRACE_SECONDS),
       )
-    : await readHomepageSnapshotJson(env.DB, now);
+    : await readHomepageSnapshotJsonAnyAge(env.DB, now, HOMEPAGE_STALE_GRACE_SECONDS);
   if (snapshot) {
     const res = new Response(snapshot.bodyJson, {
       status: 200,
       headers: { 'Content-Type': 'application/json; charset=utf-8' },
     });
-    applyHomepageCacheHeaders(res, snapshot.age);
+    applyHomepageCacheHeaders(res, Math.min(60, snapshot.age));
     if (trace) {
-      trace.setLabel('path', 'snapshot');
+      trace.setLabel('path', snapshot.age <= 60 ? 'snapshot' : 'stale');
       trace.setLabel('age', snapshot.age);
       trace.finish('total');
       await applyTrace(res, trace, 'w');
@@ -373,4 +374,3 @@ export async function handleFetch(request: Request, env: Env, ctx: ExecutionCont
   const { fetch } = await import('./hono-app');
   return fetch(request, env, ctx);
 }
-

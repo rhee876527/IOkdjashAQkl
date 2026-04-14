@@ -10,7 +10,7 @@ import {
 } from '../observability/trace';
 import {
   applyHomepageCacheHeaders,
-  readHomepageSnapshotJson,
+  readHomepageSnapshotJsonAnyAge,
   readHomepageSnapshotArtifactJson,
   readStaleHomepageSnapshotArtifactJson,
 } from '../snapshots/public-homepage-read';
@@ -19,6 +19,8 @@ import {
   readStatusSnapshotJson,
   readStaleStatusSnapshotJson,
 } from '../snapshots/public-status-read';
+
+const HOMEPAGE_STALE_GRACE_SECONDS = 2 * 60;
 
 function appendVaryHeader(res: Response, value: string): void {
   const next = value.trim();
@@ -79,13 +81,13 @@ publicHotRoutes.get('/homepage', async (c) => {
   trace.setLabel('route', 'public/homepage');
 
   const snapshot = await trace.timeAsync('homepage_snapshot_read', () =>
-    readHomepageSnapshotJson(c.env.DB, now),
+    readHomepageSnapshotJsonAnyAge(c.env.DB, now, HOMEPAGE_STALE_GRACE_SECONDS),
   );
   if (snapshot) {
     c.header('Content-Type', 'application/json; charset=utf-8');
     const res = c.body(snapshot.bodyJson);
-    applyHomepageCacheHeaders(res, snapshot.age);
-    trace.setLabel('path', 'snapshot');
+    applyHomepageCacheHeaders(res, Math.min(60, snapshot.age));
+    trace.setLabel('path', snapshot.age <= 60 ? 'snapshot' : 'stale');
     trace.setLabel('age', snapshot.age);
     trace.finish('total');
     applyTraceToResponse({ res, trace, prefix: 'w' });

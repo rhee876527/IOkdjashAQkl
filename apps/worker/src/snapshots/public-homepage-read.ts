@@ -105,15 +105,16 @@ export function applyHomepageCacheHeaders(res: Response, ageSeconds: number): vo
   );
 }
 
-export async function readHomepageSnapshotJson(
+export async function readHomepageSnapshotJsonAnyAge(
   db: D1Database,
   now: number,
+  maxStaleSeconds = MAX_STALE_SECONDS,
 ): Promise<{ bodyJson: string; age: number } | null> {
   const row = await readSnapshotRow(db, SNAPSHOT_KEY);
   if (!row) return null;
 
   const age = Math.max(0, now - row.generated_at);
-  if (age > MAX_AGE_SECONDS) return null;
+  if (age > maxStaleSeconds) return null;
 
   if (looksLikeSerializedHomepagePayload(row.body_json)) {
     return { bodyJson: row.body_json, age };
@@ -138,6 +139,13 @@ export async function readHomepageSnapshotJson(
 
   console.warn('homepage snapshot: invalid payload');
   return null;
+}
+
+export async function readHomepageSnapshotJson(
+  db: D1Database,
+  now: number,
+): Promise<{ bodyJson: string; age: number } | null> {
+  return await readHomepageSnapshotJsonAnyAge(db, now, MAX_AGE_SECONDS);
 }
 
 export async function readHomepageSnapshotArtifactJson(

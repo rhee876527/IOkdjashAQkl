@@ -320,6 +320,32 @@ describe('public homepage route', () => {
     expect(dbReads).toEqual(['homepage', 'homepage', 'homepage']);
   });
 
+  it('serves a slightly stale homepage snapshot via the worker hot path', async () => {
+    const payload = samplePayload(139);
+    const dbReads: string[] = [];
+    vi.spyOn(Date, 'now').mockReturnValue(200 * 1000);
+
+    const res = await requestHomepageViaApp('/api/v1/public/homepage', [
+      {
+        match: 'from public_snapshots',
+        first: (args) => {
+          dbReads.push(String(args[0]));
+          return args[0] === 'homepage'
+            ? {
+                generated_at: payload.generated_at,
+                body_json: JSON.stringify(payload),
+              }
+            : null;
+        },
+      },
+    ]);
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual(payload);
+    expect(dbReads).toEqual(['homepage']);
+    expect(res.headers.get('Cache-Control')).toContain('max-age=0');
+  });
+
   it('falls back to the fresh public status snapshot when the full homepage snapshot is missing', async () => {
     const now = 200;
     vi.spyOn(Date, 'now').mockReturnValue(now * 1000);
