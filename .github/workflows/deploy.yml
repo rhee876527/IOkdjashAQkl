@@ -270,7 +270,14 @@ jobs:
           if not replaced:
               raise SystemExit(f'No [[d1_databases]] block found with binding = "{d1_binding}".')
 
-          dst.write_text("".join(out), encoding="utf-8")
+          final = "".join(out)
+
+          # Optional optimization: create a self service binding so the scheduler can
+          # offload snapshot refresh into a separate invocation without public HTTP self-fetch.
+          if 'binding = "SELF"' not in final:
+              final = final.rstrip() + f'\n\n[[services]]\nbinding = "SELF"\nservice = "{worker_name}"\n'
+
+          dst.write_text(final, encoding="utf-8")
           print(f"Wrote {dst}")
           PY
 
@@ -303,16 +310,6 @@ jobs:
             echo "WORKER_URL=$worker_url" >> "$GITHUB_ENV"
             echo "worker_url=$worker_url" >> "$GITHUB_OUTPUT"
           fi
-
-      - name: Upsert Worker secret for self origin (best-effort)
-        if: ${{ steps.deploy_worker.outputs.worker_url != '' }}
-        shell: bash
-        working-directory: apps/worker
-        run: |
-          set -euo pipefail
-          printf '%s' "$WORKER_URL" | pnpm exec wrangler secret put UPTIMER_SELF_ORIGIN --name "$WORKER_NAME" --config "$WRANGLER_CI_CONFIG"
-        env:
-          WORKER_URL: ${{ steps.deploy_worker.outputs.worker_url }}
 
       - name: Warm public status snapshot (best-effort)
         if: ${{ steps.deploy_worker.outputs.worker_url != '' }}

@@ -216,32 +216,25 @@ describe('scheduler/scheduled regression', () => {
     expect(computePublicHomepagePayload).toHaveBeenCalledWith(env.DB, expectedNow);
   });
 
-  it('self-invokes homepage refresh when UPTIMER_SELF_ORIGIN is configured', async () => {
+  it('self-invokes homepage refresh via service binding when SELF is configured', async () => {
     const env = createEnv({ dueRows: [] }) as unknown as Env;
-    env.UPTIMER_SELF_ORIGIN = 'https://self.example.com';
     env.ADMIN_TOKEN = 'test-admin-token';
+    const selfFetch = vi.fn().mockResolvedValueOnce(new Response('ok', { status: 200 }));
+    env.SELF = { fetch: selfFetch } as unknown as Fetcher;
     const waitUntil = vi.fn();
-    const fetchSpy = vi
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce(new Response('ok', { status: 200 }));
 
-    try {
-      await runScheduledTick(env, { waitUntil } as unknown as ExecutionContext);
+    await runScheduledTick(env, { waitUntil } as unknown as ExecutionContext);
 
-      expect(waitUntil).toHaveBeenCalledTimes(1);
-      await Promise.all(waitUntil.mock.calls.map((call) => call[0] as Promise<unknown>));
+    expect(waitUntil).toHaveBeenCalledTimes(1);
+    await Promise.all(waitUntil.mock.calls.map((call) => call[0] as Promise<unknown>));
 
-      expect(fetchSpy).toHaveBeenCalledWith(
-        'https://self.example.com/api/v1/internal/refresh/homepage',
-        expect.objectContaining({
-          method: 'POST',
-          body: 'test-admin-token',
-        }),
-      );
-      expect(refreshPublicHomepageSnapshot).not.toHaveBeenCalled();
-    } finally {
-      fetchSpy.mockRestore();
-    }
+    expect(selfFetch).toHaveBeenCalledTimes(1);
+    const req = selfFetch.mock.calls[0]?.[0] as Request;
+    expect(req).toBeInstanceOf(Request);
+    expect(req.method).toBe('POST');
+    expect(new URL(req.url).pathname).toBe('/api/v1/internal/refresh/homepage');
+    expect(await req.text()).toBe('test-admin-token');
+    expect(refreshPublicHomepageSnapshot).not.toHaveBeenCalled();
   });
 
   it('logs homepage snapshot refresh failures without breaking the tick', async () => {

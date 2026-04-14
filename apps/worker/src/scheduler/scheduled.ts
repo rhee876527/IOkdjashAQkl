@@ -33,33 +33,27 @@ const PERSIST_BATCH_SIZE = 25;
 // Look back a bit so maintenance start/end notifications are not missed if a tick is delayed.
 const MAINTENANCE_EVENT_LOOKBACK_SECONDS = 10 * 60;
 
-function normalizeSelfOrigin(value: string | undefined): string | null {
-  const trimmed = value?.trim() ?? '';
-  if (!trimmed) return null;
-
-  let out = trimmed;
-  while (out.endsWith('/')) out = out.slice(0, -1);
-  if (!out.startsWith('http://') && !out.startsWith('https://')) return null;
-  return out;
-}
-
-async function refreshHomepageSnapshotViaSelfFetch(env: Env): Promise<void> {
-  const origin = normalizeSelfOrigin(env.UPTIMER_SELF_ORIGIN);
-  if (!origin || !env.ADMIN_TOKEN) {
-    throw new Error('UPTIMER_SELF_ORIGIN or ADMIN_TOKEN missing');
+async function refreshHomepageSnapshotViaService(env: Env): Promise<void> {
+  if (!env.SELF) {
+    throw new Error('SELF service binding missing');
+  }
+  if (!env.ADMIN_TOKEN) {
+    throw new Error('ADMIN_TOKEN missing');
   }
 
-  const res = await fetch(`${origin}/api/v1/internal/refresh/homepage`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'text/plain; charset=utf-8',
-    },
-    cache: 'no-store',
-    body: env.ADMIN_TOKEN,
-  });
+  const res = await env.SELF.fetch(
+    new Request('http://internal/api/v1/internal/refresh/homepage', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'text/plain; charset=utf-8',
+      },
+      body: env.ADMIN_TOKEN,
+    }),
+  );
+
   if (!res.ok) {
     const text = await res.text().catch(() => '');
-    throw new Error(`self refresh failed: HTTP ${res.status} ${text}`.trim());
+    throw new Error(`service refresh failed: HTTP ${res.status} ${text}`.trim());
   }
 }
 
@@ -710,11 +704,13 @@ function queueMonitorNotification(
 export async function runScheduledTick(env: Env, ctx: ExecutionContext): Promise<void> {
   const now = Math.floor(Date.now() / 1000);
   const checkedAt = Math.floor(now / 60) * 60;
-  const shouldSelfRefresh = normalizeSelfOrigin(env.UPTIMER_SELF_ORIGIN) !== null && !!env.ADMIN_TOKEN;
   const queueHomepageRefresh = () =>
-    shouldSelfRefresh
-      ? refreshHomepageSnapshotViaSelfFetch(env).catch((err) => {
-          console.warn('homepage snapshot: self refresh failed', err);
+    env.SELF
+      ? refreshHomepageSnapshotViaService(env).catch(async (err) => {
+          console.warn('homepage snapshot: service refresh failed', err);
+          await refreshHomepageSnapshotInline(env, now).catch((fallbackErr) => {
+            console.warn('homepage snapshot: refresh failed', fallbackErr);
+          });
         })
       : refreshHomepageSnapshotInline(env, now).catch((err) => {
           console.warn('homepage snapshot: refresh failed', err);
