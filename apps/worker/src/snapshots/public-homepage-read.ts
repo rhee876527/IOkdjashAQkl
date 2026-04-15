@@ -149,9 +149,9 @@ function normalizeHomepagePayloadBodyJsonForKey(
     }
   }
 
-  const artifact = publicHomepageRenderArtifactSchema.safeParse(parsed.value);
-  if (artifact.success) {
-    return JSON.stringify(artifact.data.snapshot);
+  const artifactSnapshot = publicHomepageResponseSchema.safeParse(parsed.value.snapshot);
+  if (artifactSnapshot.success) {
+    return JSON.stringify(artifactSnapshot.data);
   }
 
   return key === SNAPSHOT_KEY ? null : normalizeDirectHomepagePayload(parsed.value, parsed.trimmed);
@@ -200,9 +200,9 @@ function parseHomepagePayloadSnapshotForKey(
     }
   }
 
-  const artifact = publicHomepageRenderArtifactSchema.safeParse(parsed.value);
-  if (artifact.success) {
-    return artifact.data.snapshot;
+  const artifactSnapshot = publicHomepageResponseSchema.safeParse(parsed.value.snapshot);
+  if (artifactSnapshot.success) {
+    return artifactSnapshot.data;
   }
 
   return key === SNAPSHOT_KEY ? null : parseDirectHomepagePayload(parsed.value);
