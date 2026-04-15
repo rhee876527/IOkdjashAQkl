@@ -420,19 +420,31 @@ describe('snapshots/public-homepage', () => {
     const artifactPayload = samplePayload(now - 60);
     const db = createFakeD1Database([
       {
-        match: 'select key, generated_at, body_json',
-        all: () => [
-          {
-            key: 'homepage:artifact',
-            generated_at: artifactPayload.generated_at,
-            body_json: JSON.stringify(buildHomepageRenderArtifact(artifactPayload)),
-          },
-          {
-            key: 'homepage',
-            generated_at: payload.generated_at,
-            body_json: JSON.stringify(payload),
-          },
-        ],
+        match: 'select generated_at from public_snapshots',
+        first: (args) => {
+          if (args[0] === 'homepage:artifact') {
+            return { generated_at: artifactPayload.generated_at };
+          }
+          return null;
+        },
+      },
+      {
+        match: 'select generated_at, body_json from public_snapshots',
+        first: (args) => {
+          if (args[0] === 'homepage') {
+            return {
+              generated_at: payload.generated_at,
+              body_json: JSON.stringify(payload),
+            };
+          }
+          if (args[0] === 'homepage:artifact') {
+            return {
+              generated_at: artifactPayload.generated_at,
+              body_json: JSON.stringify(buildHomepageRenderArtifact(artifactPayload)),
+            };
+          }
+          return null;
+        },
       },
     ]);
 

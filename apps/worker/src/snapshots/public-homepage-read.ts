@@ -17,15 +17,8 @@ const READ_SNAPSHOT_GENERATED_AT_SQL = `
   FROM public_snapshots
   WHERE key = ?1
 `;
-const READ_REFRESH_SNAPSHOT_ROWS_SQL = `
-  SELECT key, generated_at, body_json
-  FROM public_snapshots
-  WHERE key IN (?1, ?2)
-`;
-
 const readSnapshotStatementByDb = new WeakMap<D1Database, D1PreparedStatement>();
 const readSnapshotGeneratedAtStatementByDb = new WeakMap<D1Database, D1PreparedStatement>();
-const readRefreshSnapshotRowsStatementByDb = new WeakMap<D1Database, D1PreparedStatement>();
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
@@ -158,26 +151,6 @@ async function readSnapshotGeneratedAt(db: D1Database, key: string): Promise<num
   }
 }
 
-async function readRefreshSnapshotRows(
-  db: D1Database,
-): Promise<Array<{ key: string; generated_at: number; body_json: string }>> {
-  try {
-    const cached = readRefreshSnapshotRowsStatementByDb.get(db);
-    const statement = cached ?? db.prepare(READ_REFRESH_SNAPSHOT_ROWS_SQL);
-    if (!cached) {
-      readRefreshSnapshotRowsStatementByDb.set(db, statement);
-    }
-
-    const result = await statement
-      .bind(SNAPSHOT_ARTIFACT_KEY, SNAPSHOT_KEY)
-      .all<{ key: string; generated_at: number; body_json: string }>();
-    return result.results ?? [];
-  } catch (err) {
-    console.warn('homepage snapshot: refresh read failed', err);
-    return [];
-  }
-}
-
 export async function readHomepageSnapshotGeneratedAt(db: D1Database): Promise<number | null> {
   return (
     (await readSnapshotGeneratedAt(db, SNAPSHOT_ARTIFACT_KEY)) ??
@@ -202,11 +175,12 @@ export async function readHomepageRefreshBaseSnapshot(
   bodyJson: string | null;
   seedDataSnapshot: boolean;
 }> {
-  const rows = await readRefreshSnapshotRows(db);
-  const artifactRow = rows.find((row) => row.key === SNAPSHOT_ARTIFACT_KEY) ?? null;
-  const homepageRow = rows.find((row) => row.key === SNAPSHOT_KEY) ?? null;
+  const [artifactGeneratedAt, homepageRow] = await Promise.all([
+    readSnapshotGeneratedAt(db, SNAPSHOT_ARTIFACT_KEY),
+    readSnapshotRow(db, SNAPSHOT_KEY),
+  ]);
   const generatedAt = Math.max(
-    artifactRow?.generated_at ?? Number.NEGATIVE_INFINITY,
+    artifactGeneratedAt ?? Number.NEGATIVE_INFINITY,
     homepageRow?.generated_at ?? Number.NEGATIVE_INFINITY,
   );
 
@@ -224,8 +198,8 @@ export async function readHomepageRefreshBaseSnapshot(
     }
   }
 
-  const preferredBodyJson =
-    artifactRow?.body_json ?? homepageRow?.body_json ?? null;
+  const artifactRow = await readSnapshotRow(db, SNAPSHOT_ARTIFACT_KEY);
+  const preferredBodyJson = artifactRow?.body_json ?? homepageRow?.body_json ?? null;
   if (!preferredBodyJson) {
     return {
       generatedAt: Number.isFinite(generatedAt) ? generatedAt : null,
