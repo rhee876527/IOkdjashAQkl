@@ -3,6 +3,7 @@ import {
   MONITOR_RUNTIME_HEARTBEAT_POINTS,
   MONITOR_RUNTIME_SNAPSHOT_VERSION,
   type PublicMonitorRuntimeSnapshot,
+  runtimeHeartbeatsToGapSec,
   toRuntimeStatusCode,
   utcDayStart,
 } from './monitor-runtime';
@@ -101,7 +102,9 @@ export async function rebuildPublicMonitorRuntimeSnapshot(
         downtime_sec: today.downtime_sec,
         unknown_sec: today.unknown_sec,
         uptime_sec: today.uptime_sec,
-        heartbeat_checked_at: heartbeats.map((heartbeat) => heartbeat.checked_at),
+        heartbeat_gap_sec: runtimeHeartbeatsToGapSec(
+          heartbeats.map((heartbeat) => heartbeat.checked_at),
+        ),
         heartbeat_latency_ms: heartbeats.map((heartbeat) => heartbeat.latency_ms),
         heartbeat_status_codes: heartbeats
           .map((heartbeat) => toRuntimeStatusCode(heartbeat.status))

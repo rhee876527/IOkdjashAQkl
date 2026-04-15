@@ -33,7 +33,7 @@ export type PublicMonitorRuntimeEntry = {
   downtime_sec: number;
   unknown_sec: number;
   uptime_sec: number;
-  heartbeat_checked_at: number[];
+  heartbeat_gap_sec: string;
   heartbeat_latency_ms: Array<number | null>;
   heartbeat_status_codes: string;
 };
@@ -69,6 +69,56 @@ export type MonitorRuntimeUpdate = {
   latency_ms: number | null;
 };
 
+function parseHeartbeatGapSec(value: string): number[] {
+  const trimmed = value.trim();
+  if (!trimmed) return [];
+
+  const parts = trimmed.split(',');
+  const gaps: number[] = [];
+  for (const part of parts) {
+    const normalized = part.trim().toLowerCase();
+    if (!normalized) return [];
+    const parsed = Number.parseInt(normalized, 36);
+    if (!Number.isInteger(parsed) || parsed < 0) {
+      return [];
+    }
+    gaps.push(parsed);
+  }
+
+  return gaps;
+}
+
+function encodeHeartbeatGapSec(gaps: number[]): string {
+  if (gaps.length === 0) return '';
+  return gaps
+    .map((gap) => clampNonNegativeInteger(gap).toString(36))
+    .join(',');
+}
+
+function heartbeatsToGapSec(
+  checkedAt: Array<number | null | undefined>,
+): string {
+  const gaps: number[] = [];
+  for (let index = 1; index < checkedAt.length; index += 1) {
+    const newer = checkedAt[index - 1];
+    const older = checkedAt[index];
+    if (typeof newer !== 'number' || !Number.isInteger(newer)) {
+      break;
+    }
+    if (typeof older !== 'number' || !Number.isInteger(older)) {
+      break;
+    }
+    gaps.push(Math.max(0, newer - older));
+  }
+  return encodeHeartbeatGapSec(gaps);
+}
+
+export function runtimeHeartbeatsToGapSec(
+  checkedAt: Array<number | null | undefined>,
+): string {
+  return heartbeatsToGapSec(checkedAt);
+}
+
 const runtimeEntrySchema = z
   .object({
     monitor_id: z.number().int().positive(),
@@ -82,14 +132,14 @@ const runtimeEntrySchema = z
     downtime_sec: z.number().int().nonnegative(),
     unknown_sec: z.number().int().nonnegative(),
     uptime_sec: z.number().int().nonnegative(),
-    heartbeat_checked_at: z.array(z.number().int().nonnegative()).max(MONITOR_RUNTIME_HEARTBEAT_POINTS),
+    heartbeat_gap_sec: z.string(),
     heartbeat_latency_ms: z
       .array(z.number().int().nonnegative().nullable())
       .max(MONITOR_RUNTIME_HEARTBEAT_POINTS),
     heartbeat_status_codes: z.string().max(MONITOR_RUNTIME_HEARTBEAT_POINTS),
   })
   .superRefine((value, ctx) => {
-    const count = value.heartbeat_checked_at.length;
+    const count = value.heartbeat_latency_ms.length;
     if (value.heartbeat_latency_ms.length !== count) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -111,6 +161,26 @@ const runtimeEntrySchema = z
         });
         break;
       }
+    }
+    const gaps = parseHeartbeatGapSec(value.heartbeat_gap_sec);
+    if (value.heartbeat_gap_sec.trim().length > 0 && gaps.length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'invalid heartbeat gap encoding',
+      });
+      return;
+    }
+    if (gaps.length !== Math.max(0, count - 1)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'heartbeat gap length mismatch',
+      });
+    }
+    if (count > 0 && value.last_checked_at === null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'missing last_checked_at for heartbeat strip',
+      });
     }
   });
 
@@ -339,7 +409,6 @@ function computeSegmentTotals(opts: {
 function cloneRuntimeEntry(entry: PublicMonitorRuntimeEntry): PublicMonitorRuntimeEntry {
   return {
     ...entry,
-    heartbeat_checked_at: [...entry.heartbeat_checked_at],
     heartbeat_latency_ms: [...entry.heartbeat_latency_ms],
   };
 }
@@ -363,7 +432,7 @@ function createRuntimeEntryForUpdate(
     downtime_sec: 0,
     unknown_sec: 0,
     uptime_sec: 0,
-    heartbeat_checked_at: [update.checked_at],
+    heartbeat_gap_sec: '',
     heartbeat_latency_ms: [isFiniteNumber(update.latency_ms) ? Math.round(update.latency_ms) : null],
     heartbeat_status_codes: toRuntimeStatusCode(update.check_status),
   };
@@ -416,19 +485,20 @@ export function applyMonitorRuntimeUpdates(
       existing.range_start_at = createdToday ? update.checked_at : dayStart;
     }
     existing.materialized_at = update.checked_at;
+    const previousLastCheckedAt = existing.last_checked_at;
     existing.last_checked_at = update.checked_at;
     existing.last_status_code = toRuntimeStatusCode(update.check_status);
     existing.last_outage_open = update.next_status === 'down';
 
-    existing.heartbeat_checked_at.unshift(update.checked_at);
     existing.heartbeat_latency_ms.unshift(
       isFiniteNumber(update.latency_ms) ? Math.round(update.latency_ms) : null,
     );
     existing.heartbeat_status_codes = `${toRuntimeStatusCode(update.check_status)}${existing.heartbeat_status_codes}`;
-
-    if (existing.heartbeat_checked_at.length > MONITOR_RUNTIME_HEARTBEAT_POINTS) {
-      existing.heartbeat_checked_at.length = MONITOR_RUNTIME_HEARTBEAT_POINTS;
+    const gaps = parseHeartbeatGapSec(existing.heartbeat_gap_sec);
+    if (typeof previousLastCheckedAt === 'number' && Number.isInteger(previousLastCheckedAt)) {
+      gaps.unshift(Math.max(0, update.checked_at - previousLastCheckedAt));
     }
+
     if (existing.heartbeat_latency_ms.length > MONITOR_RUNTIME_HEARTBEAT_POINTS) {
       existing.heartbeat_latency_ms.length = MONITOR_RUNTIME_HEARTBEAT_POINTS;
     }
@@ -438,6 +508,10 @@ export function applyMonitorRuntimeUpdates(
         MONITOR_RUNTIME_HEARTBEAT_POINTS,
       );
     }
+    if (gaps.length > Math.max(0, existing.heartbeat_latency_ms.length - 1)) {
+      gaps.length = Math.max(0, existing.heartbeat_latency_ms.length - 1);
+    }
+    existing.heartbeat_gap_sec = encodeHeartbeatGapSec(gaps);
   }
 
   return {
@@ -489,18 +563,27 @@ export function runtimeEntryToHeartbeats(
 ): MonitorRuntimeHeartbeat[] {
   const heartbeats: MonitorRuntimeHeartbeat[] = [];
   const count = Math.min(
-    entry.heartbeat_checked_at.length,
     entry.heartbeat_latency_ms.length,
     entry.heartbeat_status_codes.length,
   );
+  if (count === 0 || entry.last_checked_at === null) {
+    return heartbeats;
+  }
+
+  const gaps = parseHeartbeatGapSec(entry.heartbeat_gap_sec);
+  let checkedAt = entry.last_checked_at;
   for (let index = 0; index < count; index += 1) {
     const code = entry.heartbeat_status_codes[index] as MonitorRuntimeStatusCode | undefined;
     if (!code) continue;
     heartbeats.push({
-      checked_at: entry.heartbeat_checked_at[index] ?? 0,
+      checked_at: checkedAt,
       latency_ms: entry.heartbeat_latency_ms[index] ?? null,
       status: fromRuntimeStatusCode(code),
     });
+    const gap = gaps[index];
+    if (typeof gap === 'number') {
+      checkedAt = Math.max(0, checkedAt - gap);
+    }
   }
   return heartbeats;
 }
