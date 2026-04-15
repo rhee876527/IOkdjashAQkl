@@ -794,13 +794,18 @@ describe('computePublicHomepagePayload', () => {
 
     const handlers: FakeD1QueryHandler[] = [
       {
+        match: 'select key, value from settings',
+        all: () => [
+          { key: 'site_title', value: 'Status Hub' },
+          { key: 'site_description', value: 'Production services' },
+          { key: 'site_locale', value: 'en' },
+          { key: 'site_timezone', value: 'UTC' },
+          { key: 'uptime_rating_level', value: '4' },
+        ],
+      },
+      {
         match: 'has_resolved_incident_preview',
         first: () => ({
-          site_title_value: 'Status Hub',
-          site_description_value: 'Production services',
-          site_locale_value: 'en',
-          site_timezone_value: 'UTC',
-          uptime_rating_level_value: '4',
           monitor_count_total: 1,
           max_updated_at: baseNow,
           has_active_incidents: 0,
@@ -927,13 +932,18 @@ describe('computePublicHomepagePayload', () => {
 
     const handlers: FakeD1QueryHandler[] = [
       {
+        match: 'select key, value from settings',
+        all: () => [
+          { key: 'site_title', value: 'Status Hub' },
+          { key: 'site_description', value: 'Production services' },
+          { key: 'site_locale', value: 'en' },
+          { key: 'site_timezone', value: 'UTC' },
+          { key: 'uptime_rating_level', value: '4' },
+        ],
+      },
+      {
         match: 'has_resolved_incident_preview',
         first: () => ({
-          site_title_value: 'Status Hub',
-          site_description_value: 'Production services',
-          site_locale_value: 'en',
-          site_timezone_value: 'UTC',
-          uptime_rating_level_value: '4',
           monitor_count_total: 1,
           max_updated_at: baseNow,
           has_active_incidents: 0,
