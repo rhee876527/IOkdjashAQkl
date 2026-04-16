@@ -697,22 +697,28 @@ export async function readHomepageRefreshBaseSnapshot(
 }> {
   let invalid = false;
   const parsedByKey = new Map<SnapshotKey, ParsedSnapshotRow | null>();
+  const rowByKey = new Map<SnapshotKey, SnapshotRefreshRow | null>();
 
-  const readRefreshCandidate = (
+  const readRefreshCandidate = async (
     candidate: SnapshotCandidate,
-    row: SnapshotRefreshRow | null,
-  ): ParsedSnapshotRow | null => {
+  ): Promise<ParsedSnapshotRow | null> => {
     if (parsedByKey.has(candidate.key)) {
       return parsedByKey.get(candidate.key) ?? null;
     }
 
-    if (!row?.body_json || row.generated_at !== candidate.generatedAt) {
+    if (isFutureSnapshotCandidate(candidate, now)) {
+      invalid = true;
       parsedByKey.set(candidate.key, null);
       return null;
     }
 
-    if (isFutureSnapshotCandidate(candidate, now)) {
-      invalid = true;
+    let row = rowByKey.get(candidate.key);
+    if (row === undefined) {
+      row = await readRefreshSnapshotRowByKey(db, candidate.key);
+      rowByKey.set(candidate.key, row ?? null);
+    }
+
+    if (!row?.body_json || row.generated_at !== candidate.generatedAt) {
       parsedByKey.set(candidate.key, null);
       return null;
     }
@@ -769,34 +775,20 @@ export async function readHomepageRefreshBaseSnapshot(
     return parsedRow;
   };
 
-  const refreshRows = await readRefreshSnapshotRows(db);
-  const rowByKey = new Map(refreshRows.map((row) => [row.key, row]));
-  const homepageRow = rowByKey.get(SNAPSHOT_KEY) ?? null;
-  const artifactRow = rowByKey.get(SNAPSHOT_ARTIFACT_KEY) ?? null;
-
-  const homepageCandidate: SnapshotCandidate | null = homepageRow
-    ? {
-        key: SNAPSHOT_KEY,
-        generatedAt: homepageRow.generated_at,
-        updatedAt: toSnapshotUpdatedAt(homepageRow),
-      }
-    : null;
+  const refreshMetadataRows = await readRefreshSnapshotMetadataRows(db);
+  const candidateByKey = new Map(
+    listSnapshotCandidatesFromRefreshRows(refreshMetadataRows).map((candidate) => [candidate.key, candidate]),
+  );
+  const homepageCandidate = candidateByKey.get(SNAPSHOT_KEY) ?? null;
+  const artifactCandidate = candidateByKey.get(SNAPSHOT_ARTIFACT_KEY) ?? null;
 
   if (homepageCandidate && isSameUtcDay(homepageCandidate.generatedAt, now)) {
-    const homepageBase = readRefreshCandidate(homepageCandidate, homepageRow);
+    const homepageBase = await readRefreshCandidate(homepageCandidate);
     if (homepageBase) {
-      const artifactMetadataCandidate: SnapshotCandidate | null = artifactRow
-        ? {
-            key: SNAPSHOT_ARTIFACT_KEY,
-            generatedAt: artifactRow.generated_at,
-            updatedAt: toSnapshotUpdatedAt(artifactRow),
-          }
-        : null;
-
       if (
-        !artifactMetadataCandidate ||
-        !isSameUtcDay(artifactMetadataCandidate.generatedAt, now) ||
-        comparePayloadCandidates(artifactMetadataCandidate, homepageCandidate) >= 0
+        !artifactCandidate ||
+        !isSameUtcDay(artifactCandidate.generatedAt, now) ||
+        comparePayloadCandidates(artifactCandidate, homepageCandidate) >= 0
       ) {
         return {
           generatedAt: homepageBase.generatedAt,
@@ -807,16 +799,8 @@ export async function readHomepageRefreshBaseSnapshot(
     }
   }
 
-  const artifactCandidate: SnapshotCandidate | null = artifactRow
-    ? {
-        key: SNAPSHOT_ARTIFACT_KEY,
-        generatedAt: artifactRow.generated_at,
-        updatedAt: toSnapshotUpdatedAt(artifactRow),
-      }
-    : null;
-
   if (artifactCandidate && isSameUtcDay(artifactCandidate.generatedAt, now)) {
-    const artifactBase = readRefreshCandidate(artifactCandidate, artifactRow);
+    const artifactBase = await readRefreshCandidate(artifactCandidate);
     if (artifactBase) {
       return {
         generatedAt: artifactBase.generatedAt,
@@ -831,10 +815,7 @@ export async function readHomepageRefreshBaseSnapshot(
     .sort(comparePayloadCandidates);
 
   for (const candidate of orderedCandidates) {
-    const freshestBase = readRefreshCandidate(
-      candidate,
-      candidate.key === SNAPSHOT_KEY ? homepageRow : artifactRow,
-    );
+    const freshestBase = await readRefreshCandidate(candidate);
     if (!freshestBase) {
       continue;
     }

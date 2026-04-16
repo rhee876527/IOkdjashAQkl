@@ -509,21 +509,39 @@ describe('snapshots/public-homepage', () => {
     const artifactPayload = samplePayload(now - 60);
     const db = createFakeD1Database([
       {
-        match: 'select key, generated_at, updated_at, body_json from public_snapshots',
+        match: 'select key, generated_at, updated_at from public_snapshots',
         all: () => [
           {
             key: 'homepage',
             generated_at: payload.generated_at,
             updated_at: payload.generated_at,
-            body_json: JSON.stringify(payload),
           },
           {
             key: 'homepage:artifact',
             generated_at: artifactPayload.generated_at,
             updated_at: artifactPayload.generated_at,
-            body_json: JSON.stringify(buildHomepageRenderArtifact(artifactPayload)),
           },
         ],
+      },
+      {
+        match: 'select generated_at, updated_at, body_json from public_snapshots where key = ?1',
+        first: (args) => {
+          if (args[0] === 'homepage') {
+            return {
+              generated_at: payload.generated_at,
+              updated_at: payload.generated_at,
+              body_json: JSON.stringify(payload),
+            };
+          }
+          if (args[0] === 'homepage:artifact') {
+            return {
+              generated_at: artifactPayload.generated_at,
+              updated_at: artifactPayload.generated_at,
+              body_json: JSON.stringify(buildHomepageRenderArtifact(artifactPayload)),
+            };
+          }
+          return null;
+        },
       },
     ]);
 
@@ -534,23 +552,37 @@ describe('snapshots/public-homepage', () => {
     });
   });
 
-  it('uses the same-day homepage payload row as the refresh base from the batch snapshot read', async () => {
+  it('uses the same-day homepage payload row as the refresh base from metadata + one row read', async () => {
     const now = 1_728_000_500;
     const payload = samplePayload(now - 60);
-    let readCount = 0;
+    let metadataReadCount = 0;
+    let rowReadCount = 0;
     const db = createFakeD1Database([
       {
-        match: 'select key, generated_at, updated_at, body_json from public_snapshots',
+        match: 'select key, generated_at, updated_at from public_snapshots',
         all: () => {
-          readCount += 1;
+          metadataReadCount += 1;
           return [
             {
               key: 'homepage',
               generated_at: payload.generated_at,
               updated_at: payload.generated_at,
-              body_json: JSON.stringify(payload),
             },
           ];
+        },
+      },
+      {
+        match: 'select generated_at, updated_at, body_json from public_snapshots where key = ?1',
+        first: (args) => {
+          rowReadCount += 1;
+          if (args[0] !== 'homepage') {
+            throw new Error(`unexpected artifact read: ${String(args[0])}`);
+          }
+          return {
+            generated_at: payload.generated_at,
+            updated_at: payload.generated_at,
+            body_json: JSON.stringify(payload),
+          };
         },
       },
     ]);
@@ -560,7 +592,8 @@ describe('snapshots/public-homepage', () => {
       snapshot: payload,
       seedDataSnapshot: false,
     });
-    expect(readCount).toBe(1);
+    expect(metadataReadCount).toBe(1);
+    expect(rowReadCount).toBe(1);
   });
 
   it('keeps using the valid homepage row when an equal-age artifact row is corrupted', async () => {
@@ -568,22 +601,35 @@ describe('snapshots/public-homepage', () => {
     const payload = samplePayload(now - 60);
     const db = createFakeD1Database([
       {
-        match: 'select key, generated_at, updated_at, body_json from public_snapshots',
+        match: 'select key, generated_at, updated_at from public_snapshots',
         all: () => [
           {
             key: 'homepage',
             generated_at: payload.generated_at,
             updated_at: payload.generated_at,
-            body_json: JSON.stringify(payload),
           },
           {
             key: 'homepage:artifact',
             generated_at: payload.generated_at,
             updated_at: payload.generated_at,
-            body_json:
-              '{"generated_at":190,"preload_html":"<div>bad</div>","snapshot":{"generated_at":190',
           },
         ],
+      },
+      {
+        match: 'select generated_at, updated_at, body_json from public_snapshots where key = ?1',
+        first: (args) =>
+          args[0] === 'homepage'
+            ? {
+                generated_at: payload.generated_at,
+                updated_at: payload.generated_at,
+                body_json: JSON.stringify(payload),
+              }
+            : {
+                generated_at: payload.generated_at,
+                updated_at: payload.generated_at,
+                body_json:
+                  '{"generated_at":190,"preload_html":"<div>bad</div>","snapshot":{"generated_at":190',
+              },
       },
     ]);
 
@@ -600,21 +646,39 @@ describe('snapshots/public-homepage', () => {
     const futurePayload = samplePayload(now + 600);
     const db = createFakeD1Database([
       {
-        match: 'select key, generated_at, updated_at, body_json from public_snapshots',
+        match: 'select key, generated_at, updated_at from public_snapshots',
         all: () => [
           {
             key: 'homepage',
             generated_at: futurePayload.generated_at,
             updated_at: futurePayload.generated_at,
-            body_json: JSON.stringify(futurePayload),
           },
           {
             key: 'homepage:artifact',
             generated_at: validPayload.generated_at,
             updated_at: validPayload.generated_at,
-            body_json: JSON.stringify(buildHomepageRenderArtifact(validPayload)),
           },
         ],
+      },
+      {
+        match: 'select generated_at, updated_at, body_json from public_snapshots where key = ?1',
+        first: (args) => {
+          if (args[0] === 'homepage') {
+            return {
+              generated_at: futurePayload.generated_at,
+              updated_at: futurePayload.generated_at,
+              body_json: JSON.stringify(futurePayload),
+            };
+          }
+          if (args[0] === 'homepage:artifact') {
+            return {
+              generated_at: validPayload.generated_at,
+              updated_at: validPayload.generated_at,
+              body_json: JSON.stringify(buildHomepageRenderArtifact(validPayload)),
+            };
+          }
+          return null;
+        },
       },
     ]);
 
