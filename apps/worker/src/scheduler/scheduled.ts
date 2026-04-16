@@ -191,7 +191,6 @@ async function refreshHomepageSnapshotViaService(
       headers,
       body: runtimeUpdates
         ? JSON.stringify({
-            token: env.ADMIN_TOKEN,
             runtime_updates: runtimeUpdates,
           })
         : env.ADMIN_TOKEN,

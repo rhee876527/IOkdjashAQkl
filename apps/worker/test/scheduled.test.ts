@@ -316,7 +316,6 @@ describe('scheduler/scheduled regression', () => {
     expect(req.headers.get('Authorization')).toBe('Bearer test-admin-token');
     expect(req.headers.get('Content-Type')).toContain('application/json');
     await expect(req.json()).resolves.toMatchObject({
-      token: 'test-admin-token',
       runtime_updates: [
         {
           monitor_id: 1,

@@ -1595,6 +1595,7 @@ function tryPatchPublicHomepagePayloadFromRuntimeSnapshot(opts: {
   }
 
   const monitorIds = baseSnapshot.monitors.map((monitor) => monitor.id);
+  const monitorIdSet = new Set(monitorIds);
   if (!snapshotHasMonitorIds(runtimeSnapshot, monitorIds)) {
     opts.trace?.setLabel('runtime_snapshot_patch_skip', 'missing_monitor_ids');
     return null;
@@ -1619,7 +1620,7 @@ function tryPatchPublicHomepagePayloadFromRuntimeSnapshot(opts: {
       opts.trace?.setLabel('runtime_snapshot_patch_skip', 'invalid_update_id');
       return null;
     }
-    if (!monitorIds.includes(update.monitor_id)) {
+    if (!monitorIdSet.has(update.monitor_id)) {
       opts.trace?.setLabel('runtime_snapshot_patch_skip', 'update_outside_snapshot');
       return null;
     }
