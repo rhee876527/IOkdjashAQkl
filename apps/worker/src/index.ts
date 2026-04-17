@@ -431,6 +431,42 @@ async function handleInternalHomepageRefresh(request: Request, env: Env): Promis
       );
     }
 
+    if (scheduledRefreshRequest) {
+      try {
+        const [{ computePublicStatusPayload }, { refreshPublicStatusSnapshot }] = await Promise.all([
+          trace
+            ? trace.timeAsync('import_status_module', async () => await import('./public/status'))
+            : import('./public/status'),
+          trace
+            ? trace.timeAsync('import_status_snapshot_module', async () => await import('./snapshots/refresh'))
+            : import('./snapshots/refresh'),
+        ]);
+
+        if (trace) {
+          await trace.timeAsync(
+            'status_refresh_write',
+            async () =>
+              await refreshPublicStatusSnapshot({
+                db: env.DB,
+                now,
+                compute: async () => await computePublicStatusPayload(env.DB, now),
+              }),
+          );
+        } else {
+          await refreshPublicStatusSnapshot({
+            db: env.DB,
+            now,
+            compute: async () => await computePublicStatusPayload(env.DB, now),
+          });
+        }
+      } catch (statusRefreshErr) {
+        if (trace?.enabled) {
+          trace.setLabel('status_refresh_error', '1');
+        }
+        console.warn('internal refresh: status snapshot failed', statusRefreshErr);
+      }
+    }
+
     return finalizeInternalRefreshResponse(
       buildInternalRefreshResponse(true, true),
       trace,

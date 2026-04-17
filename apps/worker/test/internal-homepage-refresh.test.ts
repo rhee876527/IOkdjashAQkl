@@ -8,9 +8,15 @@ vi.mock('../src/public/homepage', () => ({
   computePublicHomepagePayload: vi.fn(),
   tryComputePublicHomepagePayloadFromScheduledRuntimeUpdates: vi.fn(),
 }));
+vi.mock('../src/public/status', () => ({
+  computePublicStatusPayload: vi.fn(),
+}));
 vi.mock('../src/snapshots/public-homepage', () => ({
   toHomepageSnapshotPayload: vi.fn((value) => value),
   writeHomepageSnapshot: vi.fn(),
+}));
+vi.mock('../src/snapshots/refresh', () => ({
+  refreshPublicStatusSnapshot: vi.fn(),
 }));
 
 import type { Env } from '../src/env';
@@ -19,7 +25,9 @@ import {
   computePublicHomepagePayload,
   tryComputePublicHomepagePayloadFromScheduledRuntimeUpdates,
 } from '../src/public/homepage';
+import { computePublicStatusPayload } from '../src/public/status';
 import { acquireLease, releaseLease } from '../src/scheduler/lock';
+import { refreshPublicStatusSnapshot } from '../src/snapshots/refresh';
 import { toHomepageSnapshotPayload, writeHomepageSnapshot } from '../src/snapshots/public-homepage';
 import { createFakeD1Database } from './helpers/fake-d1';
 
@@ -104,6 +112,34 @@ describe('internal homepage refresh route', () => {
     vi.restoreAllMocks();
     vi.mocked(acquireLease).mockResolvedValue(true);
     vi.mocked(releaseLease).mockResolvedValue(undefined);
+    vi.mocked(computePublicStatusPayload).mockResolvedValue({
+      generated_at: 0,
+      site_title: 'Status Hub',
+      site_description: 'Production services',
+      site_locale: 'en',
+      site_timezone: 'UTC',
+      uptime_rating_level: 4,
+      overall_status: 'up',
+      banner: {
+        source: 'monitors',
+        status: 'operational',
+        title: 'All Systems Operational',
+      },
+      summary: {
+        up: 1,
+        down: 0,
+        maintenance: 0,
+        paused: 0,
+        unknown: 0,
+      },
+      monitors: [],
+      active_incidents: [],
+      maintenance_windows: {
+        active: [],
+        upcoming: [],
+      },
+    } as never);
+    vi.mocked(refreshPublicStatusSnapshot).mockResolvedValue(undefined);
   });
 
   it('uses the scheduled runtime fast path when available', async () => {
@@ -152,6 +188,7 @@ describe('internal homepage refresh route', () => {
     expect(computePublicHomepagePayload).not.toHaveBeenCalled();
     expect(toHomepageSnapshotPayload).not.toHaveBeenCalled();
     expect(writeHomepageSnapshot).toHaveBeenCalledWith(env.DB, now, fastPayload, undefined, false);
+    expect(refreshPublicStatusSnapshot).toHaveBeenCalledTimes(1);
     expect(releaseLease).toHaveBeenCalledWith(env.DB, 'snapshot:homepage:refresh', now + 55);
     expect(
       vi.mocked(tryComputePublicHomepagePayloadFromScheduledRuntimeUpdates),
@@ -224,6 +261,7 @@ describe('internal homepage refresh route', () => {
         },
       ],
     });
+    expect(refreshPublicStatusSnapshot).toHaveBeenCalledTimes(1);
   });
 
   it('falls back to full compute when the scheduled runtime fast path misses', async () => {
@@ -271,6 +309,7 @@ describe('internal homepage refresh route', () => {
       undefined,
       false,
     );
+    expect(refreshPublicStatusSnapshot).toHaveBeenCalledTimes(1);
     expect(releaseLease).toHaveBeenCalledWith(env.DB, 'snapshot:homepage:refresh', now + 55);
   });
 });
