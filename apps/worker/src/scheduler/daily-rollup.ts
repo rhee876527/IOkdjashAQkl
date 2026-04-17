@@ -124,7 +124,7 @@ export async function runDailyRollup(
       sumIntervals(unknownIntervals) - overlapSeconds(unknownIntervals, downtimeIntervals),
     );
 
-    const unavailable_sec = Math.min(total_sec, downtime_sec + unknown_sec);
+    const unavailable_sec = downtime_sec;
     const uptime_sec = Math.max(0, total_sec - unavailable_sec);
 
     let checks_up = 0;

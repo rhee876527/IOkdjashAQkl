@@ -636,15 +636,13 @@ async function computeTodayPartialUptimeBatchSql(
       args.push(monitor.id, monitor.interval_sec, monitor.created_at, monitor.last_checked_at);
     }
 
-    const { results } = await stmt
-      .bind(...args)
-      .all<{
-        monitor_id: number;
-        start_at: number;
-        total_sec: number;
-        downtime_sec: number;
-        unknown_sec: number;
-      }>();
+    const { results } = await stmt.bind(...args).all<{
+      monitor_id: number;
+      start_at: number;
+      total_sec: number;
+      downtime_sec: number;
+      unknown_sec: number;
+    }>();
 
     const rows = results ?? [];
     const shouldReturnAtLeastOneRow = chunk.some(
@@ -673,7 +671,7 @@ async function computeTodayPartialUptimeBatchSql(
 
       const downtime_sec = Math.max(0, row.downtime_sec ?? 0);
       const unknown_sec = Math.max(0, row.unknown_sec ?? 0);
-      const unavailable_sec = Math.min(total_sec, downtime_sec + unknown_sec);
+      const unavailable_sec = downtime_sec;
       const uptime_sec = Math.max(0, total_sec - unavailable_sec);
       const uptime_pct = total_sec === 0 ? null : (uptime_sec / total_sec) * 100;
 
@@ -841,7 +839,7 @@ async function computeTodayPartialUptimeBatchLegacy(
       sumIntervals(unknownIntervals) - overlapSeconds(unknownIntervals, downtimeIntervals),
     );
 
-    const unavailable_sec = Math.min(total_sec, downtime_sec + unknown_sec);
+    const unavailable_sec = downtime_sec;
     const uptime_sec = Math.max(0, total_sec - unavailable_sec);
     const uptime_pct = total_sec === 0 ? null : (uptime_sec / total_sec) * 100;
 
@@ -1157,9 +1155,8 @@ export async function listVisibleMaintenanceWindows(
   active: FilteredMaintenanceWindowEntry[];
   upcoming: FilteredMaintenanceWindowEntry[];
 }> {
-  const maintenanceVisibilitySql = maintenanceWindowStatusPageVisibilityPredicate(
-    includeHiddenMonitors,
-  );
+  const maintenanceVisibilitySql =
+    maintenanceWindowStatusPageVisibilityPredicate(includeHiddenMonitors);
 
   const [{ results: activeResults }, { results: upcomingResults }] = await Promise.all([
     db
@@ -1208,7 +1205,10 @@ export async function listVisibleMaintenanceWindows(
     ? new Set<number>()
     : await listStatusPageVisibleMonitorIds(
         db,
-        [...activeWindowMonitorIdsByWindowId.values(), ...upcomingWindowMonitorIdsByWindowId.values()].flat(),
+        [
+          ...activeWindowMonitorIdsByWindowId.values(),
+          ...upcomingWindowMonitorIdsByWindowId.values(),
+        ].flat(),
       );
 
   const active = activeRows

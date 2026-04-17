@@ -5,10 +5,7 @@ import { getDb, monitors } from '@uptimer/db';
 
 import type { Env } from '../env';
 import { hasValidAdminTokenRequest } from '../middleware/auth';
-import {
-  homepageFromStatusPayload,
-  readHomepageHistoryPreviews,
-} from '../public/homepage';
+import { homepageFromStatusPayload, readHomepageHistoryPreviews } from '../public/homepage';
 import { computePublicStatusPayload } from '../public/status';
 import {
   buildNumberedPlaceholders,
@@ -79,18 +76,16 @@ function withVisibilityAwareCaching(res: Response, includeHiddenMonitors: boolea
 }
 
 function shouldPreferRecentHomepageArtifact(opts: {
-  artifact:
-    | {
-        age: number;
-        data: {
-          snapshot: {
-            overall_status: string;
-            banner: { status: string };
-            summary: { unknown: number };
-          };
-        };
-      }
-    | null;
+  artifact: {
+    age: number;
+    data: {
+      snapshot: {
+        overall_status: string;
+        banner: { status: string };
+        summary: { unknown: number };
+      };
+    };
+  } | null;
   computed: {
     overall_status: string;
     banner: { status: string };
@@ -561,7 +556,7 @@ publicRoutes.get('/status', async (c) => {
   if (includeHiddenMonitors) {
     const payload = await trace.timeAsync('status_compute', () =>
       computePublicStatusPayload(c.env.DB, now, {
-      includeHiddenMonitors: true,
+        includeHiddenMonitors: true,
       }),
     );
     const res = applyPrivateNoStore(c.json(payload));
@@ -675,8 +670,9 @@ publicRoutes.get('/homepage', async (c) => {
     const statusPayload = await trace.timeAsync('status_compute', () =>
       computePublicStatusPayload(c.env.DB, now),
     );
-    const artifactSnapshot = await trace.timeAsync('homepage_artifact_stale_wait', () =>
-      artifactSnapshotPromise,
+    const artifactSnapshot = await trace.timeAsync(
+      'homepage_artifact_stale_wait',
+      () => artifactSnapshotPromise,
     );
     if (
       artifactSnapshot &&
@@ -744,8 +740,9 @@ publicRoutes.get('/homepage', async (c) => {
       return res;
     }
 
-    const staleArtifact = await trace.timeAsync('homepage_artifact_stale_wait', () =>
-      artifactSnapshotPromise,
+    const staleArtifact = await trace.timeAsync(
+      'homepage_artifact_stale_wait',
+      () => artifactSnapshotPromise,
     );
     if (staleArtifact) {
       const res = c.json(staleArtifact.data.snapshot);
@@ -947,9 +944,8 @@ publicRoutes.get('/maintenance-windows', async (c) => {
   const cursor = z.coerce.number().int().positive().optional().parse(c.req.query('cursor'));
 
   const now = Math.floor(Date.now() / 1000);
-  const maintenanceVisibilitySql = maintenanceWindowStatusPageVisibilityPredicate(
-    includeHiddenMonitors,
-  );
+  const maintenanceVisibilitySql =
+    maintenanceWindowStatusPageVisibilityPredicate(includeHiddenMonitors);
   const baseSql = `
     SELECT id, title, message, starts_at, ends_at, created_at
     FROM maintenance_windows
@@ -1348,7 +1344,7 @@ publicRoutes.get('/monitors/:id/uptime', async (c) => {
     sumIntervals(unknownIntervals) - overlapSeconds(unknownIntervals, downtimeIntervals),
   );
 
-  const unavailable_sec = Math.min(total_sec, downtime_sec + unknown_sec);
+  const unavailable_sec = downtime_sec;
   const uptime_sec = Math.max(0, total_sec - unavailable_sec);
   const uptime_pct = total_sec === 0 ? 0 : (uptime_sec / total_sec) * 100;
 
@@ -1451,7 +1447,7 @@ async function computePartialUptimeTotals(
     sumIntervals(unknownIntervals) - overlapSeconds(unknownIntervals, downtimeIntervals),
   );
 
-  const unavailable_sec = Math.min(total_sec, downtime_sec + unknown_sec);
+  const unavailable_sec = downtime_sec;
   const uptime_sec = Math.max(0, total_sec - unavailable_sec);
 
   return { total_sec, downtime_sec, unknown_sec, uptime_sec };
