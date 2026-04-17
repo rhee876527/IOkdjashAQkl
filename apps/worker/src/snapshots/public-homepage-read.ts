@@ -232,7 +232,10 @@ function normalizeHomepageArtifactBodyJson(bodyJson: string): string | null {
 
   const artifact = publicHomepageStoredRenderArtifactSchema.safeParse(parsed.value);
   if (artifact.success) {
-    if (!('snapshot' in artifact.data) && !parseStoredHomepageRenderArtifactSnapshot(artifact.data)) {
+    if (
+      !('snapshot' in artifact.data) &&
+      parseJsonText(artifact.data.snapshot_json) === null
+    ) {
       return null;
     }
     return parsed.trimmed;
@@ -252,7 +255,7 @@ function normalizeHomepageArtifactBodyJson(bodyJson: string): string | null {
   }
   if (
     !('snapshot' in legacyArtifact.data) &&
-    !parseStoredHomepageRenderArtifactSnapshot(legacyArtifact.data)
+    parseJsonText(legacyArtifact.data.snapshot_json) === null
   ) {
     return null;
   }
