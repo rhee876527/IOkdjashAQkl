@@ -2297,6 +2297,7 @@ export async function tryComputePublicHomepagePayloadFromScheduledRuntimeUpdates
         maintenanceMonitorIdsPromise: Promise.resolve(new Set<number>()),
         baseSnapshot,
         runtimeSnapshot,
+        monitorMetadataStamp: guardState.monitorMetadataStamp,
         ...(opts.trace ? { trace: opts.trace } : {}),
       }),
   );
