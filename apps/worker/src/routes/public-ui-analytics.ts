@@ -57,6 +57,18 @@ function createTrace(c: {
   );
 }
 
+function normalizeAnalyticsUptimeCacheKeyUrl(url: URL): void {
+  const range = url.searchParams.get('range');
+  if (range !== null && range !== '30d' && range !== '90d') {
+    return;
+  }
+
+  url.search = '';
+  if (range === '90d') {
+    url.searchParams.set('range', '90d');
+  }
+}
+
 const statementCacheByDb = new WeakMap<D1Database, Map<string, D1PreparedStatement>>();
 
 function prepareStatement(db: D1Database, sql: string): D1PreparedStatement {
@@ -246,6 +258,7 @@ publicUiAnalyticsRoutes.use(
   cachePublic({
     cacheName: 'uptimer-public',
     maxAgeSeconds: 30,
+    normalizeCacheKeyUrl: normalizeAnalyticsUptimeCacheKeyUrl,
   }),
 );
 

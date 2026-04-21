@@ -25,8 +25,13 @@ function appendVaryHeader(res: Response, value: string): void {
   res.headers.set('Vary', `${existing}, ${next}`);
 }
 
-function buildCacheKey(url: string, origin: string | undefined): Request {
+function buildCacheKey(
+  url: string,
+  origin: string | undefined,
+  normalizeCacheKeyUrl?: (url: URL) => void,
+): Request {
   const cacheUrl = new URL(url);
+  normalizeCacheKeyUrl?.(cacheUrl);
   if (origin) {
     cacheUrl.searchParams.set('__uptimer_origin_cache_key', origin);
   }
@@ -67,6 +72,7 @@ export function cachePublic(opts: {
   cacheName: string;
   maxAgeSeconds: number;
   skipPathnames?: readonly string[];
+  normalizeCacheKeyUrl?: (url: URL) => void;
 }): MiddlewareHandler {
   return async (c, next) => {
     const traceOptions =
@@ -93,7 +99,11 @@ export function cachePublic(opts: {
     }
 
     const cache = await openNamedCache(opts.cacheName);
-    const cacheKey = buildCacheKey(c.req.url, c.req.header('Origin'));
+    const cacheKey = buildCacheKey(
+      c.req.url,
+      c.req.header('Origin'),
+      opts.normalizeCacheKeyUrl,
+    );
 
     const bypassCache = trace?.mode === 'bypass-cache';
     if (!bypassCache) {
