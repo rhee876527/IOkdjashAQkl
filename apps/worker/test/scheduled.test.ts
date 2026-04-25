@@ -360,6 +360,33 @@ describe('scheduler/scheduled regression', () => {
     );
   });
 
+  it('does not emit scheduler trace headers without a trace token', async () => {
+    const env = createEnv({ dueRows: [] }) as unknown as Env;
+    env.ADMIN_TOKEN = 'test-admin-token';
+    env.UPTIMER_TRACE_SCHEDULED_REFRESH = '1';
+    const selfFetch = vi.fn().mockResolvedValueOnce(
+      new Response(JSON.stringify({ ok: true, refreshed: false }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json; charset=utf-8' },
+      }),
+    );
+    env.SELF = { fetch: selfFetch } as unknown as Fetcher;
+    const waitUntil = vi.fn();
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+
+    await runScheduledTick(env, { waitUntil } as unknown as ExecutionContext);
+    await Promise.all(waitUntil.mock.calls.map((call) => call[0] as Promise<unknown>));
+
+    const req = selfFetch.mock.calls[0]?.[0] as Request;
+    expect(req.headers.get('X-Uptimer-Trace')).toBeNull();
+    expect(req.headers.get('X-Uptimer-Trace-Mode')).toBeNull();
+    expect(req.headers.get('X-Uptimer-Trace-Token')).toBeNull();
+    expect(req.headers.get('X-Uptimer-Trace-Id')).toBeNull();
+    expect(log).not.toHaveBeenCalledWith(
+      expect.stringContaining('scheduled: homepage_refresh_trace'),
+    );
+  });
+
   it('passes scheduler runtime updates to the internal homepage refresh service', async () => {
     const env = createEnv({
       dueRows: [

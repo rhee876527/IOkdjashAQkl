@@ -142,8 +142,9 @@ function isTruthyEnvFlag(value: unknown): boolean {
 
 function shouldTraceScheduledRefresh(env: Env): boolean {
   const rawEnv = env as unknown as Record<string, unknown>;
-  return isTruthyEnvFlag(
-    rawEnv.UPTIMER_TRACE_SCHEDULED_REFRESH ?? rawEnv.TRACE_SCHEDULED_REFRESH,
+  return (
+    readScheduledTraceToken(env) !== null &&
+    isTruthyEnvFlag(rawEnv.UPTIMER_TRACE_SCHEDULED_REFRESH ?? rawEnv.TRACE_SCHEDULED_REFRESH)
   );
 }
 
