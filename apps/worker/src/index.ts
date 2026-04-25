@@ -964,6 +964,7 @@ async function handleInternalScheduledCheckBatch(
                 notificationsModule.queueMonitorNotification(env, notify, completed),
             }
           : {}),
+        ...(trace ? { trace } : {}),
       });
     result = trace ? await trace.timeAsync('check_batch_run', runBatch) : await runBatch();
   } catch (err) {

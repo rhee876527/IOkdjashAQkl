@@ -8,6 +8,7 @@ import {
 import type { HttpResponseMatchMode, MonitorStatus } from '@uptimer/db/schema';
 
 import type { Env } from '../env';
+import type { Trace } from '../observability/trace';
 import {
   computeNextState,
   type MonitorStateSnapshot,
@@ -723,8 +724,10 @@ export async function runExclusivePersistedMonitorBatch(opts: {
     successesToUpFromDown: number;
   };
   onPersistedMonitor?: (completed: CompletedDueMonitor) => void;
+  trace?: Trace;
 }): Promise<MonitorBatchExecutionResult> {
   const ids = normalizePositiveIntegerIds(opts.ids);
+  opts.trace?.setLabel('batch_ids', ids.length);
   if (ids.length === 0) {
     return createEmptyMonitorBatchExecutionResult();
   }
@@ -732,10 +735,17 @@ export async function runExclusivePersistedMonitorBatch(opts: {
   const now = Math.floor(Date.now() / 1000);
   const expiresAt = now + BATCH_EXECUTION_LOCK_LEASE_SECONDS;
   const lockName = buildBatchExecutionLockName(opts.checkedAt, ids);
-  const acquired = await acquireLease(opts.db, lockName, now, BATCH_EXECUTION_LOCK_LEASE_SECONDS);
+  const acquired = opts.trace
+    ? await opts.trace.timeAsync(
+        'batch_acquire_lease',
+        async () => await acquireLease(opts.db, lockName, now, BATCH_EXECUTION_LOCK_LEASE_SECONDS),
+      )
+    : await acquireLease(opts.db, lockName, now, BATCH_EXECUTION_LOCK_LEASE_SECONDS);
   if (!acquired) {
+    opts.trace?.setLabel('batch_lock', 'skipped');
     return createEmptyMonitorBatchExecutionResult();
   }
+  opts.trace?.setLabel('batch_lock', 'acquired');
 
   const batchLease = startRenewableLease({
     db: opts.db,
@@ -750,11 +760,23 @@ export async function runExclusivePersistedMonitorBatch(opts: {
   let claimedMonitorLeases: MonitorExecutionLease[] = [];
 
   try {
-    const claimed = await claimMonitorExecutionLeases(opts.db, opts.checkedAt, ids, now);
+    const claimed = opts.trace
+      ? await opts.trace.timeAsync(
+          'batch_claim_monitor_leases',
+          async () => await claimMonitorExecutionLeases(opts.db, opts.checkedAt, ids, now),
+        )
+      : await claimMonitorExecutionLeases(opts.db, opts.checkedAt, ids, now);
     claimedIds = claimed.claimedIds;
     claimedMonitorLeases = claimed.leases;
+    opts.trace?.setLabel('batch_claimed_ids', claimedIds.length);
     const skippedLockCount = Math.max(0, ids.length - claimedIds.length);
-    const rows = await listPendingMonitorRowsByIds(opts.db, claimedIds, opts.checkedAt);
+    const rows = opts.trace
+      ? await opts.trace.timeAsync(
+          'batch_list_pending_rows',
+          async () => await listPendingMonitorRowsByIds(opts.db, claimedIds, opts.checkedAt),
+        )
+      : await listPendingMonitorRowsByIds(opts.db, claimedIds, opts.checkedAt);
+    opts.trace?.setLabel('batch_pending_rows', rows.length);
     if (rows.length === 0) {
       return {
         ...createEmptyMonitorBatchExecutionResult(),
@@ -772,6 +794,7 @@ export async function runExclusivePersistedMonitorBatch(opts: {
       stateMachineConfig: opts.stateMachineConfig,
       ...(opts.suppressedMonitorIds ? { suppressedMonitorIds: opts.suppressedMonitorIds } : {}),
       ...(opts.onPersistedMonitor ? { onPersistedMonitor: opts.onPersistedMonitor } : {}),
+      ...(opts.trace ? { trace: opts.trace } : {}),
       beforePersist: () => {
         if (opts.abortSignal?.aborted) {
           throw new LeaseLostError(`scheduled batch: ${lockName} aborted by caller`);
@@ -790,22 +813,29 @@ export async function runExclusivePersistedMonitorBatch(opts: {
     }
     throw err;
   } finally {
-    await Promise.all(
-      claimedMonitorLeases.map(async (lease) => {
-        await lease.guard.stop().catch((err) => {
-          console.warn('scheduled batch monitor: lease renewal task failed', err);
-        });
-        await releaseLease(opts.db, lease.name, lease.guard.getExpiresAt()).catch((err) => {
-          console.warn('scheduled: failed to release monitor execution lease', err);
-        });
-      }),
-    );
-    await batchLease.stop().catch((err) => {
-      console.warn('scheduled batch: lease renewal task failed', err);
-    });
-    await releaseLease(opts.db, lockName, batchLease.getExpiresAt()).catch((err) => {
-      console.warn('scheduled: failed to release batch execution lease', err);
-    });
+    const releaseBatchLeases = async () => {
+      await Promise.all(
+        claimedMonitorLeases.map(async (lease) => {
+          await lease.guard.stop().catch((err) => {
+            console.warn('scheduled batch monitor: lease renewal task failed', err);
+          });
+          await releaseLease(opts.db, lease.name, lease.guard.getExpiresAt()).catch((err) => {
+            console.warn('scheduled: failed to release monitor execution lease', err);
+          });
+        }),
+      );
+      await batchLease.stop().catch((err) => {
+        console.warn('scheduled batch: lease renewal task failed', err);
+      });
+      await releaseLease(opts.db, lockName, batchLease.getExpiresAt()).catch((err) => {
+        console.warn('scheduled: failed to release batch execution lease', err);
+      });
+    };
+    if (opts.trace) {
+      await opts.trace.timeAsync('batch_release_leases', releaseBatchLeases);
+    } else {
+      await releaseBatchLeases();
+    }
   }
 }
 
@@ -1179,22 +1209,28 @@ export async function runPersistedMonitorBatch(opts: {
   };
   onPersistedMonitor?: (completed: CompletedDueMonitor) => void;
   beforePersist?: () => void | Promise<void>;
+  trace?: Trace;
 }): Promise<MonitorBatchExecutionResult> {
+  opts.trace?.setLabel('batch_rows', opts.rows.length);
   const limit = pLimit(CHECK_CONCURRENCY);
   const suppressedMonitorIds = opts.suppressedMonitorIds ?? new Set<number>();
   const checksStart = performance.now();
-  const settled = await Promise.allSettled(
-    opts.rows.map((row) =>
-      limit(() =>
-        runDueMonitor(
-          row,
-          opts.checkedAt,
-          suppressedMonitorIds.has(row.id),
-          opts.stateMachineConfig,
+  const runChecks = async () =>
+    await Promise.allSettled(
+      opts.rows.map((row) =>
+        limit(() =>
+          runDueMonitor(
+            row,
+            opts.checkedAt,
+            suppressedMonitorIds.has(row.id),
+            opts.stateMachineConfig,
+          ),
         ),
       ),
-    ),
-  );
+    );
+  const settled = opts.trace
+    ? await opts.trace.timeAsync('batch_checks', runChecks)
+    : await runChecks();
   const checksDurMs = performance.now() - checksStart;
 
   const rejectedCount = settled.filter((result) => result.status === 'rejected').length;
@@ -1207,20 +1243,42 @@ export async function runPersistedMonitorBatch(opts: {
 
   let persistDurMs = 0;
   if (completed.length > 0) {
-    await opts.beforePersist?.();
+    if (opts.beforePersist) {
+      if (opts.trace) {
+        await opts.trace.timeAsync('batch_before_persist', async () => await opts.beforePersist?.());
+      } else {
+        await opts.beforePersist();
+      }
+    }
     const persistStart = performance.now();
-    await persistCompletedMonitors(opts.db, completed);
+    if (opts.trace) {
+      await opts.trace.timeAsync(
+        'batch_persist_completed',
+        async () => await persistCompletedMonitors(opts.db, completed),
+      );
+    } else {
+      await persistCompletedMonitors(opts.db, completed);
+    }
     persistDurMs = performance.now() - persistStart;
 
     if (opts.onPersistedMonitor) {
-      for (const monitor of completed) {
-        opts.onPersistedMonitor(monitor);
+      const notifyPersisted = () => {
+        for (const monitor of completed) {
+          opts.onPersistedMonitor?.(monitor);
+        }
+      };
+      if (opts.trace) {
+        opts.trace.time('batch_on_persisted', notifyPersisted);
+      } else {
+        notifyPersisted();
       }
     }
   }
 
   // Promise.allSettled preserves input order, so keep the existing monitor ordering here.
-  const runtimeUpdates = completed.map(toMonitorRuntimeUpdate);
+  const runtimeUpdates = opts.trace
+    ? opts.trace.time('batch_runtime_updates', () => completed.map(toMonitorRuntimeUpdate))
+    : completed.map(toMonitorRuntimeUpdate);
 
   return {
     runtimeUpdates,
