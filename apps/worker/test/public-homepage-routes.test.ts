@@ -383,7 +383,7 @@ describe('public homepage route', () => {
     expect(await res.json()).toEqual(payload);
   });
 
-  it('skips shared edge cache for homepage responses even when app-level CORS reflection is enabled', async () => {
+  it('caches anonymous homepage responses per reflected Origin', async () => {
     const payload = samplePayload(190);
     let metadataReads = 0;
     const bodyReads: string[] = [];
@@ -437,7 +437,7 @@ describe('public homepage route', () => {
     expect(second.headers.get('Access-Control-Allow-Origin')).toBe('https://two.example.com');
     expect(third.headers.get('Access-Control-Allow-Origin')).toBe('https://one.example.com');
     expect(metadataReads).toBe(0);
-    expect(bodyReads).toEqual(['homepage', 'homepage', 'homepage']);
+    expect(bodyReads).toEqual(['homepage', 'homepage']);
   });
 
   it('serves a fresh homepage snapshot at the max-age boundary via the worker hot path', async () => {
@@ -477,7 +477,7 @@ describe('public homepage route', () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual(payload);
     expect(metadataReads).toBe(0);
-    expect(bodyReads).toEqual(['homepage']);
+    expect(bodyReads).toEqual(['homepage', 'homepage']);
     expect(res.headers.get('Cache-Control')).toContain('max-age=0');
   });
 

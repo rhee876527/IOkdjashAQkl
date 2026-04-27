@@ -231,6 +231,90 @@ function canonicalHotPublicPathname(pathname: string): string {
   return canonicalizeApiPathname(pathname);
 }
 
+const HOT_PUBLIC_CACHE_NAME = 'uptimer-public-hot-v1';
+const HOT_PUBLIC_CACHE_PATHS = new Set([
+  '/api/v1/public/homepage',
+  '/api/v1/public/homepage-artifact',
+  '/api/v1/public/status',
+]);
+const hotPublicCacheByStorage = new WeakMap<object, Promise<Cache>>();
+
+function isHotPublicCachePath(pathname: string): boolean {
+  return HOT_PUBLIC_CACHE_PATHS.has(canonicalHotPublicPathname(pathname));
+}
+
+function openHotPublicCache(): Promise<Cache> | null {
+  const storage = globalThis.caches as unknown as
+    | (object & { open(name: string): Promise<Cache> })
+    | undefined;
+  if (!storage?.open) {
+    return null;
+  }
+
+  const cached = hotPublicCacheByStorage.get(storage);
+  if (cached) {
+    return cached;
+  }
+
+  const opened = storage.open(HOT_PUBLIC_CACHE_NAME).catch((err) => {
+    hotPublicCacheByStorage.delete(storage);
+    throw err;
+  });
+  hotPublicCacheByStorage.set(storage, opened);
+  return opened;
+}
+
+function buildHotPublicCacheKey(req: Request, origin: string | null): Request {
+  const url = new URL(req.url);
+  if (origin) {
+    url.searchParams.set('__uptimer_origin_cache_key', origin);
+  }
+  return new Request(url.toString(), { method: 'GET' });
+}
+
+async function matchHotPublicCache(req: Request, origin: string | null): Promise<Response | null> {
+  const cachePromise = openHotPublicCache();
+  if (!cachePromise) {
+    return null;
+  }
+
+  try {
+    return (await (await cachePromise).match(buildHotPublicCacheKey(req, origin))) ?? null;
+  } catch (err) {
+    console.warn('public hot cache: match failed', err);
+    return null;
+  }
+}
+
+function putHotPublicCache(
+  ctx: ExecutionContext,
+  req: Request,
+  origin: string | null,
+  res: Response,
+): void {
+  if (res.status !== 200) {
+    return;
+  }
+  const cacheControl = res.headers.get('Cache-Control') ?? '';
+  if (/(?:^|,\s*)(?:private|no-(?:store|cache))(?:\s*(?:=|,|$))/i.test(cacheControl)) {
+    return;
+  }
+
+  const cachePromise = openHotPublicCache();
+  if (!cachePromise) {
+    return;
+  }
+
+  const cacheKey = buildHotPublicCacheKey(req, origin);
+  ctx.waitUntil(
+    cachePromise
+      .then(async (cache) => await cache.put(cacheKey, res.clone()))
+      .catch((err) => {
+        console.warn('public hot cache: put failed', err);
+      }),
+  );
+}
+
 function normalizeTruthyHeader(value: string | null): boolean {
   if (!value) return false;
   const normalized = value.trim().toLowerCase();
@@ -515,9 +599,20 @@ export async function handleFetch(request: Request, env: Env, ctx: ExecutionCont
   const fastMethodPathname = resolvedApiPath?.versionedPathname ?? url.pathname;
   const fastGetOnlyPath = isGetOnlyPublicApiPath(fastMethodPathname);
   const corsAllowedMethods = allowedMethodsForApiPath(fastMethodPathname);
+  const bypassPublicSharedCache = shouldBypassPublicSharedCaching(normalizedRequest, env);
   const shouldPrivatizePublicError =
-    shouldBypassPublicSharedCaching(normalizedRequest, env) &&
-    isVersionedPublicApiPath(fastMethodPathname);
+    bypassPublicSharedCache && isVersionedPublicApiPath(fastMethodPathname);
+  const canUseHotPublicCache =
+    normalizedRequest.method === 'GET' &&
+    !bypassPublicSharedCache &&
+    isHotPublicCachePath(hotPathname);
+
+  if (canUseHotPublicCache) {
+    const cached = await matchHotPublicCache(normalizedRequest, origin);
+    if (cached) {
+      return cached;
+    }
+  }
 
   if (url.pathname === '/') {
     return new Response('ok');
@@ -549,21 +644,33 @@ export async function handleFetch(request: Request, env: Env, ctx: ExecutionCont
   try {
     if (hotPathname === '/api/v1/public/homepage-artifact') {
       const routeRes = await handlePublicHomepageArtifact(normalizedRequest, env);
-      const res = shouldBypassPublicSharedCaching(normalizedRequest, env)
+      const res = bypassPublicSharedCache
         ? applyPrivateNoStore(routeRes, normalizedRequest)
         : routeRes;
-      return applyCorsHeaders(res, origin, 'GET, OPTIONS');
+      const response = applyCorsHeaders(res, origin, 'GET, OPTIONS');
+      if (canUseHotPublicCache) {
+        putHotPublicCache(ctx, normalizedRequest, origin, response);
+      }
+      return response;
     }
     if (hotPathname === '/api/v1/public/homepage') {
       const routeRes = await handlePublicHomepage(normalizedRequest, env, ctx);
-      const res = shouldBypassPublicSharedCaching(normalizedRequest, env)
+      const res = bypassPublicSharedCache
         ? applyPrivateNoStore(routeRes, normalizedRequest)
         : routeRes;
-      return applyCorsHeaders(res, origin, 'GET, OPTIONS');
+      const response = applyCorsHeaders(res, origin, 'GET, OPTIONS');
+      if (canUseHotPublicCache) {
+        putHotPublicCache(ctx, normalizedRequest, origin, response);
+      }
+      return response;
     }
     if (hotPathname === '/api/v1/public/status') {
       const res = await handlePublicStatus(normalizedRequest, env, ctx);
-      return applyCorsHeaders(res, origin, 'GET, OPTIONS');
+      const response = applyCorsHeaders(res, origin, 'GET, OPTIONS');
+      if (canUseHotPublicCache) {
+        putHotPublicCache(ctx, normalizedRequest, origin, response);
+      }
+      return response;
     }
     if (hotPathname === '/api/v1/public/analytics/uptime') {
       const { publicUiAnalyticsRoutes } = await import('./routes/public-ui-analytics');
@@ -614,7 +721,7 @@ export async function handleFetch(request: Request, env: Env, ctx: ExecutionCont
   // Everything else stays behind a lazy import to keep cold-start CPU focused on the hot paths.
   const { fetch } = await import('./hono-app');
   const res = await fetch(normalizedRequest, env, ctx);
-  if (shouldBypassPublicSharedCaching(normalizedRequest, env) && isVersionedPublicApiPath(url.pathname)) {
+  if (bypassPublicSharedCache && isVersionedPublicApiPath(url.pathname)) {
     return applyPrivateNoStore(res, normalizedRequest);
   }
   return res;

@@ -31,9 +31,18 @@ const READ_REFRESH_SNAPSHOT_ROW_BY_KEY_SQL = `
   FROM public_snapshots
   WHERE key = ?1
 `;
+const READ_REFRESH_SNAPSHOT_METADATA_ROW_BY_KEY_SQL = `
+  SELECT generated_at, updated_at
+  FROM public_snapshots
+  WHERE key = ?1
+`;
 const readRefreshSnapshotMetadataStatementByDb = new WeakMap<D1Database, D1PreparedStatement>();
 const readRefreshSnapshotRowsStatementByDb = new WeakMap<D1Database, D1PreparedStatement>();
 const readRefreshSnapshotRowByKeyStatementByDb = new WeakMap<D1Database, D1PreparedStatement>();
+const readRefreshSnapshotMetadataRowByKeyStatementByDb = new WeakMap<
+  D1Database,
+  D1PreparedStatement
+>();
 const normalizedHomepagePayloadCacheByDb = new WeakMap<
   D1Database,
   Map<SnapshotKey, NormalizedSnapshotRow>
@@ -362,15 +371,22 @@ function readCachedNormalizedSnapshotRow(
   candidate: SnapshotCandidate,
   rawBodyJson: string,
 ): NormalizedSnapshotRow | null {
+  const row = readCachedNormalizedSnapshotRowByVersion(cacheByDb, db, candidate);
+  return row && row.rawBodyJson === rawBodyJson ? row : null;
+}
+
+function readCachedNormalizedSnapshotRowByVersion(
+  cacheByDb: WeakMap<D1Database, Map<SnapshotKey, NormalizedSnapshotRow>>,
+  db: D1Database,
+  candidate: SnapshotCandidate,
+): NormalizedSnapshotRow | null {
   const cache = getNormalizedSnapshotCache(cacheByDb, db);
   const row = cache.get(candidate.key);
   if (!row) {
     return null;
   }
 
-  return row.generatedAt === candidate.generatedAt &&
-    row.updatedAt === candidate.updatedAt &&
-    row.rawBodyJson === rawBodyJson
+  return row.generatedAt === candidate.generatedAt && row.updatedAt === candidate.updatedAt
     ? row
     : null;
 }
@@ -392,11 +408,10 @@ function writeCachedNormalizedSnapshotRow(
   return row;
 }
 
-function readCachedParsedSnapshotRow(
+function readCachedParsedSnapshotRowByVersion(
   cacheByDb: WeakMap<D1Database, Map<SnapshotKey, ParsedSnapshotRow>>,
   db: D1Database,
   candidate: SnapshotCandidate,
-  rawBodyJson: string,
 ): ParsedSnapshotRow | null {
   const cache = getParsedSnapshotCache(cacheByDb, db);
   const row = cache.get(candidate.key);
@@ -404,9 +419,7 @@ function readCachedParsedSnapshotRow(
     return null;
   }
 
-  return row.generatedAt === candidate.generatedAt &&
-    row.updatedAt === candidate.updatedAt &&
-    row.rawBodyJson === rawBodyJson
+  return row.generatedAt === candidate.generatedAt && row.updatedAt === candidate.updatedAt
     ? row
     : null;
 }
@@ -433,14 +446,20 @@ function readCachedNormalizedSnapshotRowGlobal(
   candidate: SnapshotCandidate,
   rawBodyJson: string,
 ): NormalizedSnapshotRow | null {
+  const row = readCachedNormalizedSnapshotRowGlobalByVersion(cache, candidate);
+  return row && row.rawBodyJson === rawBodyJson ? row : null;
+}
+
+function readCachedNormalizedSnapshotRowGlobalByVersion(
+  cache: ReadonlyMap<SnapshotKey, RawNormalizedSnapshotRow>,
+  candidate: SnapshotCandidate,
+): NormalizedSnapshotRow | null {
   const row = cache.get(candidate.key);
   if (!row) {
     return null;
   }
 
-  return row.generatedAt === candidate.generatedAt &&
-    row.updatedAt === candidate.updatedAt &&
-    row.rawBodyJson === rawBodyJson
+  return row.generatedAt === candidate.generatedAt && row.updatedAt === candidate.updatedAt
     ? row
     : null;
 }
@@ -461,19 +480,16 @@ function writeCachedNormalizedSnapshotRowGlobal(
   return row;
 }
 
-function readCachedParsedSnapshotRowGlobal(
+function readCachedParsedSnapshotRowGlobalByVersion(
   cache: ReadonlyMap<SnapshotKey, RawParsedSnapshotRow>,
   candidate: SnapshotCandidate,
-  rawBodyJson: string,
 ): ParsedSnapshotRow | null {
   const row = cache.get(candidate.key);
   if (!row) {
     return null;
   }
 
-  return row.generatedAt === candidate.generatedAt &&
-    row.updatedAt === candidate.updatedAt &&
-    row.rawBodyJson === rawBodyJson
+  return row.generatedAt === candidate.generatedAt && row.updatedAt === candidate.updatedAt
     ? row
     : null;
 }
@@ -546,6 +562,28 @@ async function readRefreshSnapshotMetadataRows(
     }
     console.warn('homepage snapshot: refresh metadata read failed', err);
     return [];
+  }
+}
+
+async function readRefreshSnapshotMetadataRowByKey(
+  db: D1Database,
+  key: SnapshotKey,
+): Promise<SnapshotRefreshMetadataRow | null> {
+  try {
+    const cached = readRefreshSnapshotMetadataRowByKeyStatementByDb.get(db);
+    const statement = cached ?? db.prepare(READ_REFRESH_SNAPSHOT_METADATA_ROW_BY_KEY_SQL);
+    if (!cached) {
+      readRefreshSnapshotMetadataRowByKeyStatementByDb.set(db, statement);
+    }
+
+    const row = await statement.bind(key).first<Omit<SnapshotRefreshMetadataRow, 'key'>>();
+    return row ? { key, ...row } : null;
+  } catch (err) {
+    if (isNoFakeD1HandlerError(err)) {
+      return null;
+    }
+    console.warn('homepage snapshot: refresh metadata row read failed', err);
+    return null;
   }
 }
 
@@ -649,37 +687,35 @@ async function readValidatedSnapshotCandidate(opts: {
   cacheByDb: WeakMap<D1Database, Map<SnapshotKey, NormalizedSnapshotRow>>;
   globalCache: Map<SnapshotKey, RawNormalizedSnapshotRow>;
 }): Promise<CandidateReadResult> {
-  const row = await opts.readRowByKey(opts.candidate.key);
-  if (!row || row.generated_at !== opts.candidate.generatedAt) {
-    return { row: null, invalid: false };
-  }
-
-  const dbCached = readCachedNormalizedSnapshotRow(
+  const dbCachedByVersion = readCachedNormalizedSnapshotRowByVersion(
     opts.cacheByDb,
     opts.db,
     opts.candidate,
-    row.body_json,
   );
-  if (dbCached) {
-    return { row: dbCached, invalid: false };
+  if (dbCachedByVersion) {
+    return { row: dbCachedByVersion, invalid: false };
   }
 
-  const globalCached = readCachedNormalizedSnapshotRowGlobal(
+  const globalCachedByVersion = readCachedNormalizedSnapshotRowGlobalByVersion(
     opts.globalCache,
     opts.candidate,
-    row.body_json,
   );
-  if (globalCached) {
+  if (globalCachedByVersion) {
     return {
       row: writeCachedNormalizedSnapshotRow(
         opts.cacheByDb,
         opts.db,
         opts.candidate,
-        row.body_json,
-        globalCached.bodyJson,
+        globalCachedByVersion.rawBodyJson,
+        globalCachedByVersion.bodyJson,
       ),
       invalid: false,
     };
+  }
+
+  const row = await opts.readRowByKey(opts.candidate.key);
+  if (!row || row.generated_at !== opts.candidate.generatedAt) {
+    return { row: null, invalid: false };
   }
 
   const bodyJson = opts.normalize(opts.candidate, row.body_json);
@@ -714,15 +750,15 @@ async function readPreferredSnapshotCandidate(opts: {
   cacheByDb: WeakMap<D1Database, Map<SnapshotKey, NormalizedSnapshotRow>>;
   globalCache: Map<SnapshotKey, RawNormalizedSnapshotRow>;
 }): Promise<PreferredSnapshotReadResult> {
-  const row = await readRefreshSnapshotRowByKey(opts.db, opts.key);
-  if (!row) {
+  const metadata = await readRefreshSnapshotMetadataRowByKey(opts.db, opts.key);
+  if (!metadata) {
     return { row: null, age: null, invalid: false };
   }
 
   const candidate: SnapshotCandidate = {
     key: opts.key,
-    generatedAt: row.generated_at,
-    updatedAt: toSnapshotUpdatedAt(row),
+    generatedAt: metadata.generated_at,
+    updatedAt: toSnapshotUpdatedAt(metadata),
   };
   if (isFutureSnapshotCandidate(candidate, opts.now)) {
     return { row: null, age: null, invalid: false };
@@ -736,7 +772,7 @@ async function readPreferredSnapshotCandidate(opts: {
   const result = await readValidatedSnapshotCandidate({
     db: opts.db,
     candidate,
-    readRowByKey: async (key) => (key === opts.key ? row : await readRefreshSnapshotRowByKey(opts.db, key)),
+    readRowByKey: async (key) => await readRefreshSnapshotRowByKey(opts.db, key),
     normalize: opts.normalize,
     cacheByDb: opts.cacheByDb,
     globalCache: opts.globalCache,
@@ -1046,41 +1082,33 @@ export async function readHomepageRefreshBaseSnapshot(
       return parsedByKey.get(candidate.key) ?? null;
     }
 
-    const row = await readRowByKey(candidate.key);
-    if (!row?.body_json || row.generated_at !== candidate.generatedAt) {
-      parsedByKey.set(candidate.key, null);
-      return null;
-    }
-
     if (isFutureSnapshotCandidate(candidate, now)) {
       invalid = true;
       parsedByKey.set(candidate.key, null);
       return null;
     }
 
-    const dbCached = readCachedParsedSnapshotRow(
+    const dbCachedByVersion = readCachedParsedSnapshotRowByVersion(
       parsedHomepagePayloadCacheByDb,
       db,
       candidate,
-      row.body_json,
     );
-    if (dbCached) {
-      if (!snapshotMatchesCandidateGeneratedAt(candidate, dbCached.snapshot)) {
+    if (dbCachedByVersion) {
+      if (!snapshotMatchesCandidateGeneratedAt(candidate, dbCachedByVersion.snapshot)) {
         invalid = true;
         parsedByKey.set(candidate.key, null);
         return null;
       }
-      parsedByKey.set(candidate.key, dbCached);
-      return dbCached;
+      parsedByKey.set(candidate.key, dbCachedByVersion);
+      return dbCachedByVersion;
     }
 
-    const globalCached = readCachedParsedSnapshotRowGlobal(
+    const globalCachedByVersion = readCachedParsedSnapshotRowGlobalByVersion(
       parsedHomepagePayloadCacheGlobal,
       candidate,
-      row.body_json,
     );
-    if (globalCached) {
-      if (!snapshotMatchesCandidateGeneratedAt(candidate, globalCached.snapshot)) {
+    if (globalCachedByVersion) {
+      if (!snapshotMatchesCandidateGeneratedAt(candidate, globalCachedByVersion.snapshot)) {
         invalid = true;
         parsedByKey.set(candidate.key, null);
         return null;
@@ -1089,11 +1117,17 @@ export async function readHomepageRefreshBaseSnapshot(
         parsedHomepagePayloadCacheByDb,
         db,
         candidate,
-        row.body_json,
-        globalCached.snapshot,
+        globalCachedByVersion.rawBodyJson,
+        globalCachedByVersion.snapshot,
       );
       parsedByKey.set(candidate.key, parsedRow);
       return parsedRow;
+    }
+
+    const row = await readRowByKey(candidate.key);
+    if (!row?.body_json || row.generated_at !== candidate.generatedAt) {
+      parsedByKey.set(candidate.key, null);
+      return null;
     }
 
     const snapshot = parseHomepagePayloadSnapshotForKey(candidate.key, row.body_json);
@@ -1120,14 +1154,14 @@ export async function readHomepageRefreshBaseSnapshot(
     return parsedRow;
   };
 
-  const refreshRows = await readRefreshSnapshotRows(db);
-  for (const row of refreshRows) {
-    rowByKey.set(row.key, row);
+  let metadataRows = await readRefreshSnapshotMetadataRows(db);
+  if (metadataRows.length === 0) {
+    const refreshRows = await readRefreshSnapshotRows(db);
+    for (const row of refreshRows) {
+      rowByKey.set(row.key, row);
+    }
+    metadataRows = refreshRows.map(toSnapshotRefreshMetadataRow);
   }
-  const metadataRows =
-    refreshRows.length > 0
-      ? refreshRows.map(toSnapshotRefreshMetadataRow)
-      : await readRefreshSnapshotMetadataRows(db);
   const metadataByKey = new Map(metadataRows.map((row) => [row.key, row]));
   const homepageMetadata = metadataByKey.get(SNAPSHOT_KEY) ?? null;
   const artifactMetadata = metadataByKey.get(SNAPSHOT_ARTIFACT_KEY) ?? null;
