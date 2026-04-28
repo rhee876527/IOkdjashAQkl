@@ -241,6 +241,45 @@ describe('internal sharded public snapshot assembler route', () => {
     });
   });
 
+  it('reports internal assembly errors with bounded diagnostics', async () => {
+    const env = {
+      DB: createFakeD1Database([
+        {
+          match: 'from public_snapshot_fragments',
+          all: () => {
+            throw new Error('fragment read failed');
+          },
+        },
+      ]),
+      ADMIN_TOKEN: 'test-admin-token',
+      UPTIMER_PUBLIC_SHARDED_ASSEMBLER: '1',
+    } as unknown as Env;
+
+    const res = await worker.fetch(
+      new Request('http://internal/api/v1/internal/assemble/sharded-public-snapshot', {
+        method: 'POST',
+        headers: {
+          Authorization: 'Bearer test-admin-token',
+          'Content-Type': 'application/json; charset=utf-8',
+        },
+        body: JSON.stringify({ kind: 'status', assembly: 'json' }),
+      }),
+      env,
+      { waitUntil: vi.fn() } as unknown as ExecutionContext,
+    );
+
+    expect(res.status).toBe(500);
+    await expect(res.json()).resolves.toMatchObject({
+      ok: false,
+      assembled: false,
+      kind: 'status',
+      assembly: 'json',
+      error: true,
+      error_name: 'Error',
+      error_message: 'fragment read failed',
+    });
+  });
+
   it('assembles fragment JSON without parsing every monitor when requested', async () => {
     const res = await worker.fetch(
       new Request('http://internal/api/v1/internal/assemble/sharded-public-snapshot', {

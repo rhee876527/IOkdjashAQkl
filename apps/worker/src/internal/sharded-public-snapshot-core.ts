@@ -41,6 +41,8 @@ export type ShardedPublicSnapshotAssembleResult = {
   bodyBytes?: number | undefined;
   skip?: 'missing_envelope' | 'missing_monitors' | 'invalid_payload';
   error?: boolean;
+  errorName?: string;
+  errorMessage?: string;
 };
 
 export type ShardedPublicSnapshotSeedOptions = {
@@ -71,6 +73,19 @@ function measuredBodyBytes(value: unknown, enabled: boolean): number | undefined
     return undefined;
   }
   return JSON.stringify(value).length;
+}
+
+function toErrorInfo(err: unknown): { errorName: string; errorMessage: string } {
+  if (err instanceof Error) {
+    return {
+      errorName: err.name || 'Error',
+      errorMessage: err.message || 'Unknown error',
+    };
+  }
+  return {
+    errorName: typeof err,
+    errorMessage: String(err),
+  };
 }
 
 function bodyJsonBytes(bodyJson: string, enabled: boolean): number | undefined {
@@ -364,6 +379,7 @@ export async function assembleShardedPublicSnapshot(
     };
   } catch (err) {
     console.warn('internal sharded public snapshot assembly failed', err);
+    const errorInfo = toErrorInfo(err);
     return {
       ok: false,
       assembled: false,
@@ -373,6 +389,7 @@ export async function assembleShardedPublicSnapshot(
       staleCount: 0,
       mode,
       error: true,
+      ...errorInfo,
     };
   }
 }

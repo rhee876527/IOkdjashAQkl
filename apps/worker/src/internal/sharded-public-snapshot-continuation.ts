@@ -37,6 +37,8 @@ export type ShardedPublicSnapshotContinuationResult = {
   staleCount?: number;
   skipped?: string;
   error?: boolean;
+  errorName?: string;
+  errorMessage?: string;
 };
 
 const CONTINUATION_PATH = '/api/v1/internal/continue/sharded-public-snapshot';
@@ -270,5 +272,7 @@ export async function runShardedPublicSnapshotContinuation(opts: {
     ...(continued && nextStep ? { nextStep } : {}),
     ...(result.skip ? { skipped: result.skip } : {}),
     ...(result.error ? { error: true } : {}),
+    ...(result.errorName ? { errorName: result.errorName } : {}),
+    ...(result.errorMessage ? { errorMessage: result.errorMessage } : {}),
   };
 }
