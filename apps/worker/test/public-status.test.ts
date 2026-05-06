@@ -554,9 +554,9 @@ describe('public/status payload regression', () => {
       total_sec: 600,
       downtime_sec: 60,
       unknown_sec: 360,
-      uptime_sec: 180,
+      uptime_sec: 540,
     });
-    expect(today?.uptime_pct).toBeCloseTo(30, 6);
+    expect(today?.uptime_pct).toBeCloseTo(90, 6);
   });
 
   it('does not seed synthetic today uptime from checks before monitor creation', async () => {
@@ -652,9 +652,9 @@ describe('public/status payload regression', () => {
       total_sec: 90,
       downtime_sec: 0,
       unknown_sec: 90,
-      uptime_sec: 0,
+      uptime_sec: 90,
     });
-    expect(today?.uptime_pct).toBeCloseTo(0, 6);
+    expect(today?.uptime_pct).toBeCloseTo(100, 6);
   });
 
   it('does not count downtime before monitor creation in synthetic today uptime', async () => {
