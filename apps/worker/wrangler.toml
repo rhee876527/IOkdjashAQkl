@@ -13,6 +13,9 @@ enabled = true
 [triggers]
 crons = ["* * * * *"]
 
+[placement]
+region = "aws:eu-central-1"
+
 [[d1_databases]]
 binding = "DB"
 database_name = "uptimer"
