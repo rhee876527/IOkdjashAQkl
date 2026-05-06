@@ -329,7 +329,7 @@ async function computePartialDayRow(
     sumIntervals(unknownIntervals) - overlapSeconds(unknownIntervals, downtimeIntervals),
   );
 
-  const unavailable_sec = Math.min(total_sec, downtime_sec + unknown_sec);
+  const unavailable_sec = downtime_sec;
   const uptime_sec = Math.max(0, total_sec - unavailable_sec);
   const uptime_pct = total_sec === 0 ? 0 : (uptime_sec / total_sec) * 100;
 
@@ -474,7 +474,7 @@ adminAnalyticsRoutes.get('/monitors/:id', async (c) => {
       sumIntervals(unknownIntervals) - overlapSeconds(unknownIntervals, downtimeIntervals),
     );
 
-    const unavailable_sec = Math.min(total_sec, downtime_sec + unknown_sec);
+    const unavailable_sec = downtime_sec;
     const uptime_sec = Math.max(0, total_sec - unavailable_sec);
     const uptime_pct = total_sec === 0 ? 0 : (uptime_sec / total_sec) * 100;
     const unknown_pct = total_sec === 0 ? 0 : (unknown_sec / total_sec) * 100;
