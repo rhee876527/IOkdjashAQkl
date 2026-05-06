@@ -695,7 +695,7 @@ async function computePartialUptimeTotalsSql(
   const total_sec = Math.max(0, row.total_sec);
   const downtime_sec = Math.max(0, row.downtime_sec);
   const unknown_sec = Math.max(0, row.unknown_sec);
-  const unavailable_sec = Math.min(total_sec, downtime_sec + unknown_sec);
+  const unavailable_sec = downtime_sec;
   const uptime_sec = Math.max(0, total_sec - unavailable_sec);
 
   return { total_sec, downtime_sec, unknown_sec, uptime_sec };
@@ -784,7 +784,7 @@ async function computePartialUptimeTotalsLegacy(
     sumIntervals(unknownIntervals) - overlapSeconds(unknownIntervals, downtimeIntervals),
   );
 
-  const unavailable_sec = Math.min(total_sec, downtime_sec + unknown_sec);
+  const unavailable_sec = downtime_sec;
   const uptime_sec = Math.max(0, total_sec - unavailable_sec);
 
   return { total_sec, downtime_sec, unknown_sec, uptime_sec };
@@ -1894,7 +1894,7 @@ publicUiRoutes.get('/monitors/:id/uptime', async (c) => {
       const total_sec = Math.max(0, singlePartial.total_sec ?? 0);
       const downtime_sec = Math.max(0, singlePartial.downtime_sec ?? 0);
       const unknown_sec = Math.max(0, singlePartial.unknown_sec ?? 0);
-      const unavailable_sec = Math.min(total_sec, downtime_sec + unknown_sec);
+      const unavailable_sec = downtime_sec;
       addUptimeTotals(totals, {
         total_sec,
         downtime_sec,
@@ -1918,7 +1918,7 @@ publicUiRoutes.get('/monitors/:id/uptime', async (c) => {
       const total_sec = Math.max(0, startPartial.total_sec ?? 0);
       const downtime_sec = Math.max(0, startPartial.downtime_sec ?? 0);
       const unknown_sec = Math.max(0, startPartial.unknown_sec ?? 0);
-      const unavailable_sec = Math.min(total_sec, downtime_sec + unknown_sec);
+      const unavailable_sec = downtime_sec;
       addUptimeTotals(totals, {
         total_sec,
         downtime_sec,

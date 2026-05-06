@@ -790,7 +790,7 @@ async function computeTodayPartialUptimeBatchSql(
 
       const downtime_sec = Math.max(0, row.downtime_sec ?? 0);
       const unknown_sec = Math.max(0, row.unknown_sec ?? 0);
-      const unavailable_sec = Math.min(total_sec, downtime_sec + unknown_sec);
+      const unavailable_sec = downtime_sec;
       const uptime_sec = Math.max(0, total_sec - unavailable_sec);
       const uptime_pct = total_sec === 0 ? null : (uptime_sec / total_sec) * 100;
 
@@ -958,7 +958,7 @@ async function computeTodayPartialUptimeBatchLegacy(
       sumIntervals(unknownIntervals) - overlapSeconds(unknownIntervals, downtimeIntervals),
     );
 
-    const unavailable_sec = Math.min(total_sec, downtime_sec + unknown_sec);
+    const unavailable_sec = downtime_sec;
     const uptime_sec = Math.max(0, total_sec - unavailable_sec);
     const uptime_pct = total_sec === 0 ? null : (uptime_sec / total_sec) * 100;
 
