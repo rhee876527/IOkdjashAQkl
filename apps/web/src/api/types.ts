@@ -106,6 +106,7 @@ export interface PublicMonitor {
   id: number;
   name: string;
   type: MonitorType;
+  display_url: string | null;
   group_name: string | null;
   group_sort_order: number;
   sort_order: number;
@@ -175,6 +176,7 @@ export interface HomepageMonitorCard {
   id: number;
   name: string;
   type: MonitorType;
+  display_url: string | null;
   group_name: string | null;
   status: MonitorStatus;
   is_stale: boolean;
@@ -343,6 +345,7 @@ export interface AdminMonitor {
   name: string;
   type: MonitorType;
   target: string;
+  display_url: string | null;
   group_name: string | null;
   group_sort_order: number;
   sort_order: number;
@@ -352,6 +355,7 @@ export interface AdminMonitor {
   http_method: string | null;
   http_headers_json: Record<string, string> | null;
   http_body: string | null;
+  follow_redirects: boolean;
   expected_status_json: number[] | null;
   response_keyword: string | null;
   response_keyword_mode: HttpResponseMatchMode | null;
@@ -372,6 +376,7 @@ export interface CreateMonitorInput {
   name: string;
   type: MonitorType;
   target: string;
+  display_url?: string | null;
   group_name?: string;
   group_sort_order?: number;
   sort_order?: number;
@@ -381,6 +386,7 @@ export interface CreateMonitorInput {
   http_method?: string;
   http_headers_json?: Record<string, string>;
   http_body?: string;
+  follow_redirects?: boolean;
   expected_status_json?: number[];
   response_keyword?: string;
   response_keyword_mode?: HttpResponseMatchMode;
@@ -392,6 +398,7 @@ export interface CreateMonitorInput {
 export interface PatchMonitorInput {
   name?: string;
   target?: string;
+  display_url?: string | null;
   group_name?: string | null;
   group_sort_order?: number;
   sort_order?: number;
@@ -401,6 +408,7 @@ export interface PatchMonitorInput {
   http_method?: string;
   http_headers_json?: Record<string, string> | null;
   http_body?: string | null;
+  follow_redirects?: boolean;
   expected_status_json?: number[] | null;
   response_keyword?: string | null;
   response_keyword_mode?: HttpResponseMatchMode | null;

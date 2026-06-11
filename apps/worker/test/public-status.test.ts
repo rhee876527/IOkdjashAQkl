@@ -15,6 +15,7 @@ describe('public/status payload regression', () => {
             id: 11,
             name: 'API Gateway',
             type: 'http',
+            display_url: 'https://status.example.com/api',
             group_name: 'Core',
             group_sort_order: 0,
             sort_order: 0,
@@ -96,6 +97,7 @@ describe('public/status payload regression', () => {
     });
 
     expect(payload.monitors).toHaveLength(1);
+    expect(payload.monitors[0]?.display_url).toBe('https://status.example.com/api');
     expect(payload.monitors[0]?.heartbeats).toEqual([
       { checked_at: now - 60, status: 'up', latency_ms: 80 },
       { checked_at: now - 120, status: 'down', latency_ms: null },

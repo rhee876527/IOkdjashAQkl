@@ -152,6 +152,10 @@ export type PublicHomepageEnvelopeFragment = z.infer<typeof homepageEnvelopeFrag
 export type StatusMonitorFragment = PublicStatusResponse['monitors'][number];
 export type HomepageMonitorFragment = PublicHomepageResponse['monitors'][number];
 
+function normalizeDisplayUrl(value: unknown): string | null {
+  return typeof value === 'string' ? value : null;
+}
+
 export function toStatusEnvelopeFragment(
   payload: PublicStatusResponse,
 ): PublicStatusEnvelopeFragment {
@@ -446,14 +450,28 @@ export function parseHomepageMonitorFragmentRows(
   rows: readonly PublicSnapshotFragmentRow[],
   opts: MonitorRuntimeUpdateFragmentReadOptions = {},
 ): PublicSnapshotFragmentParseResult<HomepageMonitorFragment> {
-  return parseMonitorFragmentRows(rows, homepageMonitorCardSchema, opts);
+  const parsed = parseMonitorFragmentRows(rows, homepageMonitorCardSchema, opts);
+  return {
+    ...parsed,
+    data: parsed.data.map((monitor): HomepageMonitorFragment => ({
+      ...monitor,
+      display_url: normalizeDisplayUrl(monitor.display_url),
+    })),
+  };
 }
 
 export function parseStatusMonitorFragmentRows(
   rows: readonly PublicSnapshotFragmentRow[],
   opts: MonitorRuntimeUpdateFragmentReadOptions = {},
 ): PublicSnapshotFragmentParseResult<StatusMonitorFragment> {
-  return parseMonitorFragmentRows(rows, statusMonitorFragmentSchema, opts);
+  const parsed = parseMonitorFragmentRows(rows, statusMonitorFragmentSchema, opts);
+  return {
+    ...parsed,
+    data: parsed.data.map((monitor): StatusMonitorFragment => ({
+      ...monitor,
+      display_url: normalizeDisplayUrl(monitor.display_url),
+    })),
+  };
 }
 
 function orderMonitorFragmentsByEnvelope<T extends { id: number }>(

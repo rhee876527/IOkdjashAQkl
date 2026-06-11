@@ -25,7 +25,16 @@ const AVAILABILITY_BARS = 60;
 
 type PublicMonitorLike = Pick<
   PublicMonitor,
-  'id' | 'name' | 'type' | 'status' | 'is_stale' | 'last_checked_at' | 'heartbeats' | 'uptime_30d' | 'uptime_days'
+  | 'id'
+  | 'name'
+  | 'type'
+  | 'display_url'
+  | 'status'
+  | 'is_stale'
+  | 'last_checked_at'
+  | 'heartbeats'
+  | 'uptime_30d'
+  | 'uptime_days'
 >;
 
 type HomepageMonitorLike = Pick<
@@ -33,6 +42,7 @@ type HomepageMonitorLike = Pick<
   | 'id'
   | 'name'
   | 'type'
+  | 'display_url'
   | 'status'
   | 'is_stale'
   | 'last_checked_at'
@@ -140,6 +150,18 @@ export function MonitorCard({
             <h3 className="truncate text-base font-semibold leading-tight text-slate-900 dark:text-slate-100">
               {monitor.name}
             </h3>
+            {monitor.display_url && (
+              <a
+                href={monitor.display_url}
+                target="_blank"
+                rel="noreferrer"
+                onClick={(event) => event.stopPropagation()}
+                className="mt-0.5 block truncate text-xs text-slate-500 underline decoration-slate-300 underline-offset-2 hover:text-slate-900 dark:text-slate-400 dark:decoration-slate-600 dark:hover:text-slate-100"
+                title={monitor.display_url}
+              >
+                {monitor.display_url}
+              </a>
+            )}
             <div className="mt-0.5 flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
               <span>{monitor.type}</span>
               {monitor.is_stale && (

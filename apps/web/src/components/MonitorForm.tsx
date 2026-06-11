@@ -77,11 +77,12 @@ function hasAdvancedHttpConfig(monitor: AdminMonitor | undefined): boolean {
     !!monitor.http_headers_json && Object.keys(monitor.http_headers_json).length > 0;
   const hasExpected = !!monitor.expected_status_json && monitor.expected_status_json.length > 0;
   const hasBody = !!monitor.http_body && monitor.http_body.trim().length > 0;
+  const hasRedirectOverride = monitor.follow_redirects === false;
   const hasKw = !!monitor.response_keyword && monitor.response_keyword.trim().length > 0;
   const hasForbiddenKw =
     !!monitor.response_forbidden_keyword && monitor.response_forbidden_keyword.trim().length > 0;
 
-  return hasHeaders || hasExpected || hasBody || hasKw || hasForbiddenKw;
+  return hasHeaders || hasExpected || hasBody || hasRedirectOverride || hasKw || hasForbiddenKw;
 }
 
 function parseHeadersJson(
@@ -182,6 +183,24 @@ function parseOptionalSortOrderInput(
   return { ok: true, value: n };
 }
 
+function parseOptionalDisplayUrlInput(
+  text: string,
+  t: TranslateFn,
+): { ok: true; value: string | null } | { ok: false; error: string } {
+  const trimmed = text.trim();
+  if (!trimmed) return { ok: true, value: null };
+
+  try {
+    const url = new URL(trimmed);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+      return { ok: false, error: t('monitor_form.error_display_url_protocol') };
+    }
+    return { ok: true, value: trimmed };
+  } catch {
+    return { ok: false, error: t('monitor_form.error_display_url_invalid') };
+  }
+}
+
 function parseRegexPatternInput(
   pattern: string,
   mode: HttpResponseMatchMode,
@@ -227,6 +246,7 @@ export function MonitorForm(props: CreateProps | EditProps) {
   const [showOnStatusPage, setShowOnStatusPage] = useState(monitor?.show_on_status_page ?? true);
   const [type, setType] = useState<MonitorType>(monitor?.type ?? 'http');
   const [target, setTarget] = useState(monitor?.target ?? '');
+  const [displayUrl, setDisplayUrl] = useState(monitor?.display_url ?? '');
   const [intervalSec, setIntervalSec] = useState(monitor?.interval_sec ?? 60);
   const [timeoutMs, setTimeoutMs] = useState(monitor?.timeout_ms ?? 10000);
 
@@ -254,6 +274,9 @@ export function MonitorForm(props: CreateProps | EditProps) {
   const [httpBody, setHttpBody] = useState(() =>
     monitor?.type === 'http' ? (monitor.http_body ?? '') : '',
   );
+  const [followRedirects, setFollowRedirects] = useState(() =>
+    monitor?.type === 'http' ? monitor.follow_redirects : true,
+  );
   const [responseKeyword, setResponseKeyword] = useState(() =>
     monitor?.type === 'http' ? (monitor.response_keyword ?? '') : '',
   );
@@ -271,6 +294,10 @@ export function MonitorForm(props: CreateProps | EditProps) {
     );
 
   const headersParse = useMemo(() => parseHeadersJson(httpHeadersJson, t), [httpHeadersJson, t]);
+  const displayUrlParse = useMemo(
+    () => parseOptionalDisplayUrlInput(displayUrl, t),
+    [displayUrl, t],
+  );
   const expectedStatusParse = useMemo(
     () => parseExpectedStatusInput(expectedStatusInput, t),
     [expectedStatusInput, t],
@@ -291,6 +318,7 @@ export function MonitorForm(props: CreateProps | EditProps) {
   const canSubmit =
     name.trim().length > 0 &&
     target.trim().length > 0 &&
+    displayUrlParse.ok &&
     groupSortOrderParse.ok &&
     (type !== 'http' ||
       !showAdvancedHttp ||
@@ -311,6 +339,7 @@ export function MonitorForm(props: CreateProps | EditProps) {
       show_on_status_page: showOnStatusPage,
       interval_sec: intervalSec,
       timeout_ms: timeoutMs,
+      display_url: displayUrlParse.ok ? displayUrlParse.value : null,
     };
 
     if (monitor) {
@@ -326,6 +355,8 @@ export function MonitorForm(props: CreateProps | EditProps) {
         data.http_method = httpMethod;
 
         if (showAdvancedHttp) {
+          data.follow_redirects = followRedirects;
+
           if (headersParse.ok) {
             data.http_headers_json =
               Object.keys(headersParse.value).length > 0 ? headersParse.value : null;
@@ -348,6 +379,7 @@ export function MonitorForm(props: CreateProps | EditProps) {
           data.http_headers_json = null;
           data.expected_status_json = null;
           data.http_body = null;
+          data.follow_redirects = true;
           data.response_keyword = null;
           data.response_keyword_mode = null;
           data.response_forbidden_keyword = null;
@@ -369,6 +401,8 @@ export function MonitorForm(props: CreateProps | EditProps) {
       data.http_method = httpMethod;
 
       if (showAdvancedHttp) {
+        data.follow_redirects = followRedirects;
+
         if (headersParse.ok && Object.keys(headersParse.value).length > 0) {
           data.http_headers_json = headersParse.value;
         }
@@ -522,6 +556,23 @@ export function MonitorForm(props: CreateProps | EditProps) {
         />
       </div>
 
+      <div>
+        <label className={labelClass}>{t('monitor_form.display_url_optional')}</label>
+        <input
+          type="url"
+          value={displayUrl}
+          onChange={(e) => setDisplayUrl(e.target.value)}
+          placeholder={t('monitor_form.display_url_placeholder')}
+          className={inputClass}
+        />
+        {!displayUrlParse.ok && (
+          <div className="mt-1 text-xs text-red-600 dark:text-red-400">
+            {displayUrlParse.error}
+          </div>
+        )}
+        <div className={FIELD_HELP_CLASS}>{t('monitor_form.display_url_help')}</div>
+      </div>
+
       {type === 'http' && (
         <div>
           <label className={labelClass}>{t('monitor_form.method')}</label>
@@ -576,6 +627,23 @@ export function MonitorForm(props: CreateProps | EditProps) {
 
           {showAdvancedHttp && (
             <div className="mt-4 space-y-4">
+              <label className="flex items-start gap-3 text-sm text-slate-700 dark:text-slate-300">
+                <input
+                  type="checkbox"
+                  checked={followRedirects}
+                  onChange={(e) => setFollowRedirects(e.target.checked)}
+                  className="mt-1"
+                />
+                <span>
+                  <span className="font-medium text-slate-900 dark:text-slate-100">
+                    {t('monitor_form.follow_redirects')}
+                  </span>
+                  <span className={`mt-1 block ${FIELD_HELP_CLASS}`}>
+                    {t('monitor_form.follow_redirects_help')}
+                  </span>
+                </span>
+              </label>
+
               <div>
                 <label className={labelClass}>{t('monitor_form.headers_optional')}</label>
                 <textarea

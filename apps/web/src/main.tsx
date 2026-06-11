@@ -99,6 +99,7 @@ function homepageFromStatus(status: StatusResponse): PublicHomepageResponse {
       id: monitor.id,
       name: monitor.name,
       type: monitor.type,
+      display_url: monitor.display_url ?? null,
       group_name: monitor.group_name,
       status: monitor.status,
       is_stale: monitor.is_stale,

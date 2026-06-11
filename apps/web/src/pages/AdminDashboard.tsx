@@ -1523,8 +1523,19 @@ export function AdminDashboard() {
                                     <td className="px-3 sm:px-4 py-3">
                                       <Badge variant="info">{m.type}</Badge>
                                     </td>
-                                    <td className="max-w-[160px] truncate px-3 py-3 text-sm text-slate-500 dark:text-slate-400 sm:max-w-[220px] sm:px-4">
-                                      {m.target}
+                                    <td className="max-w-[160px] px-3 py-3 text-sm text-slate-500 dark:text-slate-400 sm:max-w-[220px] sm:px-4">
+                                      <div className="truncate">{m.target}</div>
+                                      {m.display_url && (
+                                        <a
+                                          href={m.display_url}
+                                          target="_blank"
+                                          rel="noreferrer"
+                                          className="mt-0.5 block truncate text-xs text-slate-700 underline decoration-slate-300 underline-offset-2 hover:text-slate-950 dark:text-slate-300 dark:decoration-slate-600 dark:hover:text-slate-50"
+                                          title={m.display_url}
+                                        >
+                                          {t('common.display_url')}: {m.display_url}
+                                        </a>
+                                      )}
                                     </td>
                                     <td className="px-3 sm:px-4 py-3">
                                       <div className="flex items-center gap-2">

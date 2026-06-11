@@ -29,6 +29,7 @@ export type PublicStatusMonitorRow = {
   id: number;
   name: string;
   type: string;
+  display_url: string | null;
   group_name: string | null;
   group_sort_order: number;
   sort_order: number;
@@ -1002,6 +1003,7 @@ export async function buildPublicMonitorCards(
         m.id,
         m.name,
         m.type,
+        m.display_url,
         m.group_name,
         m.group_sort_order,
         m.sort_order,
@@ -1059,6 +1061,7 @@ export async function buildPublicMonitorCards(
       id: r.id,
       name: r.name,
       type: r.type === 'tcp' ? 'tcp' : 'http',
+      display_url: r.display_url ?? null,
       group_name: r.group_name?.trim() ? r.group_name.trim() : null,
       group_sort_order: r.group_sort_order,
       sort_order: r.sort_order,

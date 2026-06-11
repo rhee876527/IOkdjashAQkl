@@ -52,6 +52,7 @@ export type CompletedNotificationMonitor = {
     name: string;
     type: string;
     target: string;
+    display_url: string | null;
   };
   checkedAt: number;
   prevStatus: MonitorStatus | null;
@@ -351,6 +352,7 @@ export function queueMonitorNotification(
       name: row.name,
       type: row.type,
       target: row.target,
+      display_url: row.display_url ?? null,
     },
     state: {
       status: next.status,

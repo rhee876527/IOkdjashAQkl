@@ -18,11 +18,13 @@ type StoredMonitorRow = {
   name: string;
   type: 'http' | 'tcp';
   target: string;
+  display_url: string | null;
   interval_sec: number;
   timeout_ms: number;
   http_method: string | null;
   http_headers_json: string | null;
   http_body: string | null;
+  follow_redirects: number;
   expected_status_json: string | null;
   response_keyword: string | null;
   response_keyword_mode: 'contains' | 'regex' | null;
@@ -43,11 +45,13 @@ function monitorRowToRaw(row: StoredMonitorRow): unknown[] {
     row.name,
     row.type,
     row.target,
+    row.display_url,
     row.interval_sec,
     row.timeout_ms,
     row.http_method,
     row.http_headers_json,
     row.http_body,
+    row.follow_redirects,
     row.expected_status_json,
     row.response_keyword,
     row.response_keyword_mode,
@@ -87,24 +91,26 @@ function createEnv(monitorsById: Map<number, StoredMonitorRow>): Env {
           name: String(args[0]),
           type: String(args[1]) as 'http' | 'tcp',
           target: String(args[2]),
-          interval_sec: Number(args[3]),
-          timeout_ms: Number(args[4]),
-          http_method: (args[5] as string | null) ?? null,
-          http_headers_json: (args[6] as string | null) ?? null,
-          http_body: (args[7] as string | null) ?? null,
-          expected_status_json: (args[8] as string | null) ?? null,
-          response_keyword: (args[9] as string | null) ?? null,
-          response_keyword_mode: (args[10] as StoredMonitorRow['response_keyword_mode']) ?? null,
-          response_forbidden_keyword: (args[11] as string | null) ?? null,
+          display_url: (args[3] as string | null) ?? null,
+          interval_sec: Number(args[4]),
+          timeout_ms: Number(args[5]),
+          http_method: (args[6] as string | null) ?? null,
+          http_headers_json: (args[7] as string | null) ?? null,
+          http_body: (args[8] as string | null) ?? null,
+          follow_redirects: args[9] === false || args[9] === 0 ? 0 : 1,
+          expected_status_json: (args[10] as string | null) ?? null,
+          response_keyword: (args[11] as string | null) ?? null,
+          response_keyword_mode: (args[12] as StoredMonitorRow['response_keyword_mode']) ?? null,
+          response_forbidden_keyword: (args[13] as string | null) ?? null,
           response_forbidden_keyword_mode:
-            (args[12] as StoredMonitorRow['response_forbidden_keyword_mode']) ?? null,
-          group_name: (args[13] as string | null) ?? null,
-          group_sort_order: Number(args[14]),
-          sort_order: Number(args[15]),
-          show_on_status_page: Number(args[16]),
-          is_active: Number(args[17]),
-          created_at: Number(args[18]),
-          updated_at: Number(args[19]),
+            (args[14] as StoredMonitorRow['response_forbidden_keyword_mode']) ?? null,
+          group_name: (args[15] as string | null) ?? null,
+          group_sort_order: Number(args[16]),
+          sort_order: Number(args[17]),
+          show_on_status_page: Number(args[18]),
+          is_active: Number(args[19]),
+          created_at: Number(args[20]),
+          updated_at: Number(args[21]),
         };
         monitorsById.set(row.id, row);
         nextMonitorId += 1;
@@ -252,6 +258,60 @@ describe('admin monitor response assertion routes', () => {
     });
   });
 
+  it('persists display URL and disabled redirect following for manual monitor tests', async () => {
+    const app = createAdminApp();
+    const monitorsById = new Map<number, StoredMonitorRow>();
+    const env = createEnv(monitorsById);
+
+    const createRes = await requestAdmin(app, env, '/api/v1/admin/monitors', {
+      method: 'POST',
+      body: {
+        name: 'Redirect API',
+        type: 'http',
+        target: 'https://example.com/redirect',
+        display_url: '  https://example.com/status  ',
+        follow_redirects: false,
+        expected_status_json: [302],
+      },
+    });
+
+    expect(createRes.status).toBe(201);
+    const created = (await createRes.json()) as {
+      monitor: {
+        id: number;
+        display_url: string | null;
+        follow_redirects: boolean;
+        expected_status_json: number[] | null;
+      };
+    };
+    expect(created.monitor.display_url).toBe('https://example.com/status');
+    expect(created.monitor.follow_redirects).toBe(false);
+    expect(created.monitor.expected_status_json).toEqual([302]);
+
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      expect(init?.redirect).toBe('manual');
+      return new Response(null, {
+        status: 302,
+        headers: { Location: 'https://example.com/final' },
+      });
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const testRes = await requestAdmin(app, env, `/api/v1/admin/monitors/${created.monitor.id}/test`, {
+      method: 'POST',
+    });
+
+    expect(testRes.status).toBe(200);
+    await expect(testRes.json()).resolves.toMatchObject({
+      result: {
+        status: 'up',
+        http_status: 302,
+        error: null,
+      },
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it('rejects invalid regex patterns at API validation time', async () => {
     const app = createAdminApp();
     const env = createEnv(new Map());
@@ -283,11 +343,13 @@ describe('admin monitor response assertion routes', () => {
       name: 'TCP Service',
       type: 'tcp',
       target: 'example.com:443',
+      display_url: null,
       interval_sec: 60,
       timeout_ms: 5000,
       http_method: null,
       http_headers_json: null,
       http_body: null,
+      follow_redirects: 1,
       expected_status_json: null,
       response_keyword: null,
       response_keyword_mode: null,

@@ -77,6 +77,7 @@ type HomepageMonitorRow = {
   id: number;
   name: string;
   type: string;
+  display_url: string | null;
   group_name: string | null;
   interval_sec: number;
   created_at: number;
@@ -484,6 +485,7 @@ function toHomepageMonitorCard(
     id: row.id,
     name: row.name,
     type: toHomepageMonitorType(row.type),
+    display_url: row.display_url ?? null,
     group_name: row.group_name?.trim() ? row.group_name.trim() : null,
     status: presentation.status,
     is_stale: presentation.is_stale,
@@ -684,6 +686,7 @@ function buildHomepageMonitorRowsFromBaseSnapshot(
         id: monitor.id,
         name: monitor.name,
         type: monitor.type,
+        display_url: monitor.display_url ?? null,
         group_name: monitor.group_name,
         interval_sec: runtimeEntry.interval_sec,
         created_at: runtimeEntry.created_at,
@@ -716,6 +719,7 @@ async function listHomepageMonitorRows(
         m.id,
         m.name,
         m.type,
+        m.display_url,
         m.group_name,
         m.interval_sec,
         m.created_at,
@@ -1513,6 +1517,7 @@ export function homepageFromStatusPayload(
       id: monitor.id,
       name: monitor.name,
       type: monitor.type,
+      display_url: monitor.display_url ?? null,
       group_name: monitor.group_name,
       status: monitor.status,
       is_stale: monitor.is_stale,

@@ -13,6 +13,7 @@ export type HttpCheckConfig = {
   method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD';
   headers: Record<string, string> | null;
   body: string | null;
+  followRedirects: boolean;
   expectedStatus: number[] | null;
   responseKeyword: string | null;
   responseKeywordMode: HttpResponseMatchMode | null;
@@ -137,6 +138,7 @@ async function attemptHttpCheck(
     const init: RequestInit = {
       method: config.method,
       headers,
+      redirect: config.followRedirects ? 'follow' : 'manual',
       cache: 'no-store',
       cf: {
         cacheTtlByStatus: { '100-599': -1 },

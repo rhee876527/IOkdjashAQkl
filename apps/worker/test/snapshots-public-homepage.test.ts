@@ -64,6 +64,7 @@ function samplePayload(now = 1_728_000_000) {
         id: 1,
         name: 'API',
         type: 'http' as const,
+        display_url: null,
         group_name: null,
         status: 'up' as const,
         is_stale: false,

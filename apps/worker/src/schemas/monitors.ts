@@ -11,12 +11,33 @@ const monitorGroupNameSchema = z.string().trim().min(1).max(64);
 const monitorGroupSortOrderSchema = z.number().int().min(-100_000).max(100_000);
 const monitorSortOrderSchema = z.number().int().min(-100_000).max(100_000);
 const httpResponseMatchModeSchema = z.enum(HTTP_RESPONSE_MATCH_MODES);
+const displayUrlSchema = z.preprocess(
+  (value) => {
+    if (typeof value !== 'string') return value;
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  },
+  z
+    .string()
+    .url()
+    .refine((value) => {
+      try {
+        const url = new URL(value);
+        return url.protocol === 'http:' || url.protocol === 'https:';
+      } catch {
+        return false;
+      }
+    }, 'display_url protocol must be http or https')
+    .nullable()
+    .optional(),
+);
 
 export const createMonitorInputSchema = z
   .object({
     name: z.string().min(1),
     type: z.enum(['http', 'tcp']),
     target: z.string().min(1),
+    display_url: displayUrlSchema,
 
     interval_sec: z.number().int().min(60).optional(),
     timeout_ms: z.number().int().min(1000).optional(),
@@ -24,6 +45,7 @@ export const createMonitorInputSchema = z
     http_method: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD']).optional(),
     http_headers_json: httpHeadersJsonSchema.optional(),
     http_body: z.string().optional(),
+    follow_redirects: z.boolean().optional(),
     expected_status_json: expectedStatusJsonSchema.optional(),
     response_keyword: z.string().min(1).optional(),
     response_keyword_mode: httpResponseMatchModeSchema.optional(),
@@ -48,6 +70,7 @@ export const createMonitorInputSchema = z
       (val.http_method !== undefined ||
         val.http_headers_json !== undefined ||
         val.http_body !== undefined ||
+        val.follow_redirects !== undefined ||
         val.expected_status_json !== undefined ||
         val.response_keyword !== undefined ||
         val.response_keyword_mode !== undefined ||
@@ -80,6 +103,7 @@ export const patchMonitorInputSchema = z
   .object({
     name: z.string().min(1).optional(),
     target: z.string().min(1).optional(),
+    display_url: displayUrlSchema,
 
     interval_sec: z.number().int().min(60).optional(),
     timeout_ms: z.number().int().min(1000).optional(),
@@ -87,6 +111,7 @@ export const patchMonitorInputSchema = z
     http_method: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD']).optional(),
     http_headers_json: httpHeadersJsonSchema.nullable().optional(),
     http_body: z.string().nullable().optional(),
+    follow_redirects: z.boolean().optional(),
     expected_status_json: expectedStatusJsonSchema.nullable().optional(),
     response_keyword: z.string().min(1).nullable().optional(),
     response_keyword_mode: httpResponseMatchModeSchema.nullable().optional(),

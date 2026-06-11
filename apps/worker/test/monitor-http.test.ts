@@ -8,6 +8,7 @@ const BASE_CONFIG = {
   method: 'GET' as const,
   headers: null,
   body: null,
+  followRedirects: true,
   expectedStatus: null,
   responseKeyword: null,
   responseKeywordMode: null,
@@ -42,6 +43,7 @@ describe('monitor/http', () => {
     const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
       const headers = new Headers(init?.headers);
       expect(init?.cache).toBe('no-store');
+      expect(init?.redirect).toBe('follow');
       expect(headers.get('user-agent')).toBe('Uptimer/0.1');
       expect((init?.cf as { cacheTtlByStatus?: unknown })?.cacheTtlByStatus).toEqual({
         '100-599': -1,
@@ -91,6 +93,38 @@ describe('monitor/http', () => {
     expect(outcome.httpStatus).toBe(418);
     expect(outcome.error).toMatch(/Unexpected HTTP status/);
     expect(outcome.attempts).toBe(3);
+  });
+
+  it('uses manual redirect mode and only accepts 3xx statuses explicitly', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      expect(init?.redirect).toBe('manual');
+      return new Response(null, {
+        status: 302,
+        headers: { Location: 'https://example.com/final' },
+      });
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const defaultOutcomePromise = runHttpCheck({ ...BASE_CONFIG, followRedirects: false });
+    await vi.advanceTimersByTimeAsync(1_200);
+    const defaultOutcome = await defaultOutcomePromise;
+
+    expect(defaultOutcome.status).toBe('down');
+    expect(defaultOutcome.httpStatus).toBe(302);
+    expect(defaultOutcome.error).toBe('Unexpected HTTP status: 302');
+    expect(defaultOutcome.attempts).toBe(3);
+
+    const explicitOutcome = await runHttpCheck({
+      ...BASE_CONFIG,
+      followRedirects: false,
+      expectedStatus: [302],
+    });
+
+    expect(explicitOutcome.status).toBe('up');
+    expect(explicitOutcome.httpStatus).toBe(302);
+    expect(explicitOutcome.error).toBeNull();
+    expect(explicitOutcome.attempts).toBe(1);
   });
 
   it('applies keyword assertions for response bodies', async () => {

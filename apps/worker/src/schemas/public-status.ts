@@ -63,10 +63,13 @@ const heartbeatSchema = z.object({
   latency_ms: z.number().int().nonnegative().nullable(),
 });
 
+const displayUrlSchema = z.string().url().nullable().catch(null);
+
 const storedPublicMonitorSchema = z.object({
   id: z.number().int().positive(),
   name: z.string(),
   type: z.enum(['http', 'tcp']),
+  display_url: displayUrlSchema,
   group_name: z.string().min(1).nullable(),
   group_sort_order: z.number().int(),
   sort_order: z.number().int(),
@@ -84,6 +87,7 @@ const publicMonitorSchema = z.object({
   id: z.number().int().positive(),
   name: z.string(),
   type: z.enum(['http', 'tcp']),
+  display_url: displayUrlSchema,
   group_name: z.string().min(1).nullable(),
   group_sort_order: z.number().int(),
   sort_order: z.number().int(),

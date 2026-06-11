@@ -267,6 +267,7 @@ function monitorRowToApi(
     name: row.name,
     type: row.type,
     target: row.target,
+    display_url: row.displayUrl,
     interval_sec: row.intervalSec,
     timeout_ms: row.timeoutMs,
     http_method: row.httpMethod,
@@ -274,6 +275,7 @@ function monitorRowToApi(
       field: 'http_headers_json',
     }),
     http_body: row.httpBody,
+    follow_redirects: row.followRedirects,
     expected_status_json: parseDbJsonNullable(expectedStatusJsonSchema, row.expectedStatusJson, {
       field: 'expected_status_json',
     }),
@@ -437,6 +439,7 @@ adminRoutes.post('/monitors', async (c) => {
       name: input.name,
       type: input.type,
       target: input.target,
+      displayUrl: input.display_url ?? null,
       intervalSec: input.interval_sec ?? 60,
       timeoutMs: input.timeout_ms ?? 10000,
 
@@ -448,6 +451,7 @@ adminRoutes.post('/monitors', async (c) => {
             })
           : null,
       httpBody: input.type === 'http' ? (input.http_body ?? null) : null,
+      followRedirects: input.type === 'http' ? (input.follow_redirects ?? true) : true,
       expectedStatusJson:
         input.type === 'http'
           ? serializeDbJsonNullable(expectedStatusJsonSchema, input.expected_status_json ?? null, {
@@ -523,6 +527,7 @@ adminRoutes.patch('/monitors/:id', async (c) => {
       'http_method',
       'http_headers_json',
       'http_body',
+      'follow_redirects',
       'expected_status_json',
       'response_keyword',
       'response_keyword_mode',
@@ -580,6 +585,7 @@ adminRoutes.patch('/monitors/:id', async (c) => {
     .set({
       name: input.name ?? existing.name,
       target: input.target ?? existing.target,
+      displayUrl: input.display_url !== undefined ? input.display_url : existing.displayUrl,
       intervalSec: input.interval_sec ?? existing.intervalSec,
       timeoutMs: input.timeout_ms ?? existing.timeoutMs,
       httpMethod: input.http_method !== undefined ? input.http_method : existing.httpMethod,
@@ -590,6 +596,8 @@ adminRoutes.patch('/monitors/:id', async (c) => {
             })
           : existing.httpHeadersJson,
       httpBody: input.http_body !== undefined ? input.http_body : existing.httpBody,
+      followRedirects:
+        input.follow_redirects !== undefined ? input.follow_redirects : existing.followRedirects,
       expectedStatusJson:
         input.expected_status_json !== undefined
           ? serializeDbJsonNullable(expectedStatusJsonSchema, input.expected_status_json, {
@@ -674,6 +682,7 @@ adminRoutes.post('/monitors/:id/test', async (c) => {
         field: 'http_headers_json',
       }),
       body: monitor.httpBody,
+      followRedirects: monitor.followRedirects,
       expectedStatus: parseDbJsonNullable(expectedStatusJsonSchema, monitor.expectedStatusJson, {
         field: 'expected_status_json',
       }),

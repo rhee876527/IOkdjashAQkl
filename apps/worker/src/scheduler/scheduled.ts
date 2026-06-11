@@ -810,12 +810,14 @@ export type DueMonitorRow = {
   name: string;
   type: string;
   target: string;
+  display_url: string | null;
   interval_sec: number;
   created_at: number;
   timeout_ms: number;
   http_method: string | null;
   http_headers_json: string | null;
   http_body: string | null;
+  follow_redirects: number | boolean | null;
   expected_status_json: string | null;
   response_keyword: string | null;
   response_keyword_mode: HttpResponseMatchMode | null;
@@ -882,12 +884,14 @@ const LIST_DUE_MONITORS_SQL = `
     m.name,
     m.type,
     m.target,
+    m.display_url,
     m.interval_sec,
     m.created_at,
     m.timeout_ms,
     m.http_method,
     m.http_headers_json,
     m.http_body,
+    m.follow_redirects,
     m.expected_status_json,
     m.response_keyword,
     m.response_keyword_mode,
@@ -989,6 +993,10 @@ function toMonitorStatus(value: string | null): MonitorStatus | null {
   }
 }
 
+function toBooleanDefaultTrue(value: boolean | number | null | undefined): boolean {
+  return value !== false && value !== 0;
+}
+
 async function listDueMonitors(db: D1Database, checkedAt: number): Promise<DueMonitorRow[]> {
   const cached = listDueMonitorsStatementByDb.get(db);
   const statement = cached ?? db.prepare(LIST_DUE_MONITORS_SQL);
@@ -1019,12 +1027,14 @@ export async function listMonitorRowsByIds(
         m.name,
         m.type,
         m.target,
+        m.display_url,
         m.interval_sec,
         m.created_at,
         m.timeout_ms,
         m.http_method,
         m.http_headers_json,
         m.http_body,
+        m.follow_redirects,
         m.expected_status_json,
         m.response_keyword,
         m.response_keyword_mode,
@@ -1551,6 +1561,7 @@ async function runDueMonitor(
           method: httpMethod,
           headers: httpHeaders,
           body: row.http_body,
+          followRedirects: toBooleanDefaultTrue(row.follow_redirects),
           expectedStatus,
           responseKeyword: row.response_keyword,
           responseKeywordMode: row.response_keyword_mode,

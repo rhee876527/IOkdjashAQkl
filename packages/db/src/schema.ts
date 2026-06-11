@@ -24,6 +24,7 @@ export const monitors = sqliteTable(
     name: text('name').notNull(),
     type: text('type').$type<MonitorType>().notNull(),
     target: text('target').notNull(),
+    displayUrl: text('display_url'),
 
     intervalSec: integer('interval_sec').notNull().default(60),
     timeoutMs: integer('timeout_ms').notNull().default(10000),
@@ -31,6 +32,7 @@ export const monitors = sqliteTable(
     httpMethod: text('http_method'),
     httpHeadersJson: text('http_headers_json'),
     httpBody: text('http_body'),
+    followRedirects: integer('follow_redirects', { mode: 'boolean' }).notNull().default(true),
     expectedStatusJson: text('expected_status_json'),
     responseKeyword: text('response_keyword'),
     responseKeywordMode: text('response_keyword_mode').$type<HttpResponseMatchMode>(),

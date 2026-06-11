@@ -48,6 +48,7 @@ const en = {
   'common.type': 'Type',
   'common.title_label': 'Title',
   'common.url': 'URL',
+  'common.display_url': 'Display URL',
   'common.impact': 'Impact',
   'common.schedule': 'Schedule',
   'common.state': 'State',
@@ -319,10 +320,17 @@ const en = {
   'monitor_form.target_host_port': 'Host:Port',
   'monitor_form.target_url_placeholder': 'https://example.com',
   'monitor_form.target_host_port_placeholder': 'example.com:443',
+  'monitor_form.display_url_optional': 'Display URL (optional)',
+  'monitor_form.display_url_placeholder': 'https://example.com',
+  'monitor_form.display_url_help':
+    'Shown in admin views and default notifications when set. Leave empty to show no URL.',
   'monitor_form.method': 'Method',
   'monitor_form.interval_sec': 'Interval (sec)',
   'monitor_form.timeout_ms': 'Timeout (ms)',
   'monitor_form.advanced_http_options': 'Advanced HTTP options',
+  'monitor_form.follow_redirects': 'Follow redirects',
+  'monitor_form.follow_redirects_help':
+    'When off, the check stops at the first 3xx response. Add that status code below if it should count as up.',
   'monitor_form.headers_optional': 'Headers (JSON, optional)',
   'monitor_form.headers_placeholder': '{"Authorization":"Bearer ..."}',
   'monitor_form.headers_help': 'Tip: set Content-Type here if you use a request body.',
@@ -352,6 +360,8 @@ const en = {
   'monitor_form.error_expected_status_json_or_list':
     'Expected status codes must be a JSON array like [200,204] or a list like "200, 204"',
   'monitor_form.error_expected_status_must_array': 'Expected status codes must be an array',
+  'monitor_form.error_display_url_invalid': 'Display URL must be a valid URL',
+  'monitor_form.error_display_url_protocol': 'Display URL protocol must be http or https',
   'monitor_form.error_regex_invalid': 'Invalid regex: {message}',
 
   'notification_form.name': 'Name',
@@ -491,6 +501,7 @@ const zhCn: LocaleMessages = {
   'common.type': '类型',
   'common.title_label': '标题',
   'common.url': 'URL',
+  'common.display_url': '展现网址',
   'common.impact': '影响级别',
   'common.schedule': '计划',
   'common.state': '状态',
@@ -759,10 +770,17 @@ const zhCn: LocaleMessages = {
   'monitor_form.target_host_port': '主机:端口',
   'monitor_form.target_url_placeholder': 'https://example.com',
   'monitor_form.target_host_port_placeholder': 'example.com:443',
+  'monitor_form.display_url_optional': '展现网址（可选）',
+  'monitor_form.display_url_placeholder': 'https://example.com',
+  'monitor_form.display_url_help':
+    '设置后用于后台展示和默认通知。留空时不展示任何网址。',
   'monitor_form.method': '请求方法',
   'monitor_form.interval_sec': '探测间隔（秒）',
   'monitor_form.timeout_ms': '超时（毫秒）',
   'monitor_form.advanced_http_options': '高级 HTTP 选项',
+  'monitor_form.follow_redirects': '跟随跳转',
+  'monitor_form.follow_redirects_help':
+    '关闭后，探测会停在第一个 3xx 响应；如需视为成功，请在下方期望状态码中加入对应 3xx。',
   'monitor_form.headers_optional': '请求头（JSON，可选）',
   'monitor_form.headers_placeholder': '{"Authorization":"Bearer ..."}',
   'monitor_form.headers_help': '提示：如果要发送请求体，请在此设置 Content-Type。',
@@ -790,6 +808,8 @@ const zhCn: LocaleMessages = {
   'monitor_form.error_expected_status_json_or_list':
     '期望状态码必须是 JSON 数组（如 [200,204]）或列表（如 "200, 204"）',
   'monitor_form.error_expected_status_must_array': '期望状态码必须是数组',
+  'monitor_form.error_display_url_invalid': '展现网址必须是合法 URL',
+  'monitor_form.error_display_url_protocol': '展现网址协议必须是 http 或 https',
   'monitor_form.error_regex_invalid': '正则表达式无效：{message}',
 
   'notification_form.name': '名称',

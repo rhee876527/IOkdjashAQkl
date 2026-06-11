@@ -57,10 +57,13 @@ const homepageUptimeDayStripSchema = z.object({
   uptime_pct_milli: z.array(z.number().int().min(0).max(100_000).nullable()),
 });
 
+const displayUrlSchema = z.string().url().nullable().catch(null);
+
 export const homepageMonitorCardSchema = z.object({
   id: z.number().int().positive(),
   name: z.string(),
   type: z.enum(['http', 'tcp']),
+  display_url: displayUrlSchema,
   group_name: z.string().min(1).nullable(),
   status: monitorStatusSchema,
   is_stale: z.boolean(),

@@ -76,10 +76,16 @@ describe('notify/template', () => {
   });
 
   it('builds default message templates for built-in event types', () => {
-    expect(defaultMessageForEvent('monitor.down', vars)).toContain('Monitor DOWN: API');
-    expect(defaultMessageForEvent('monitor.up', vars)).toBe(
-      'Monitor UP: API (https://api.example.com/health)',
+    expect(defaultMessageForEvent('monitor.down', vars)).toBe(
+      'Monitor DOWN: API\nError: Timeout 10000ms',
     );
+    expect(defaultMessageForEvent('monitor.up', vars)).toBe('Monitor UP: API');
+    expect(
+      defaultMessageForEvent('monitor.up', {
+        ...vars,
+        monitor: { ...vars.monitor, display_url: 'https://example.com/status' },
+      }),
+    ).toBe('Monitor UP: API (https://example.com/status)');
     expect(defaultMessageForEvent('incident.created', vars)).toBe(
       'Incident created: API outage (impact: major)',
     );
