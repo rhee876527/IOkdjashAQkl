@@ -174,6 +174,36 @@ function createEnv(options: CreateEnvOptions = {}): Env {
   } as unknown as Env;
 }
 
+function makeDueMonitorRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  const checkedAt = Math.floor(
+    Math.floor(new Date('2026-02-17T00:00:42.000Z').getTime() / 1000) / 60,
+  ) * 60;
+  return {
+    id: 1,
+    name: 'API',
+    type: 'http',
+    target: 'https://example.com',
+    interval_sec: 60,
+    created_at: 1_760_000_000,
+    timeout_ms: 10_000,
+    http_method: 'GET',
+    http_headers_json: null,
+    http_body: null,
+    expected_status_json: null,
+    response_keyword: null,
+    response_keyword_mode: null,
+    response_forbidden_keyword: null,
+    response_forbidden_keyword_mode: null,
+    state_status: 'up',
+    state_last_error: null,
+    last_checked_at: checkedAt - 60,
+    last_changed_at: 1_760_000_000,
+    consecutive_failures: 0,
+    consecutive_successes: 1,
+    ...overrides,
+  };
+}
+
 describe('scheduler/scheduled regression', () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -331,17 +361,17 @@ describe('scheduler/scheduled regression', () => {
     await expect(listMonitorRowsByIds(env.DB, [0, -1])).resolves.toEqual([]);
   });
 
-  it('queues homepage refresh when monitors are runnable but none are due', async () => {
-    const env = createEnv({ dueRows: [] });
+  it('queues homepage refresh after processing due monitors', async () => {
+    const env = createEnv({ dueRows: [makeDueMonitorRow()] });
     const waitUntil = vi.fn();
     const expectedNow = Math.floor(Date.now() / 1000);
 
     await runScheduledTick(env, { waitUntil } as unknown as ExecutionContext);
+    await Promise.all(waitUntil.mock.calls.map((call) => call[0] as Promise<unknown>));
 
     expect(acquireLease).toHaveBeenCalledWith(env.DB, 'scheduler:tick', expectedNow, 135);
-    expect(readSettings).not.toHaveBeenCalled();
+    expect(readSettings).toHaveBeenCalled();
     expect(waitUntil).toHaveBeenCalledTimes(1);
-    await Promise.all(waitUntil.mock.calls.map((call) => call[0] as Promise<unknown>));
     expect(refreshPublicHomepageSnapshotIfNeeded).toHaveBeenCalledWith({
       db: env.DB,
       now: expectedNow,
@@ -357,7 +387,7 @@ describe('scheduler/scheduled regression', () => {
     });
   });
 
-  it('skips monitor scheduling but keeps idle public refresh and maintenance notifications', async () => {
+  it('skips monitor scheduling when no schedulable monitors exist', async () => {
     const now = Math.floor(Date.now() / 1000);
     const env = createEnv({
       dueRows: [],
@@ -392,28 +422,13 @@ describe('scheduler/scheduled regression', () => {
 
     expect(acquireLease).not.toHaveBeenCalled();
     expect(readSettings).not.toHaveBeenCalled();
-    expect(waitUntil).toHaveBeenCalledTimes(2);
-    await Promise.all(waitUntil.mock.calls.map((call) => call[0] as Promise<unknown>));
-    expect(refreshPublicHomepageSnapshotIfNeeded).toHaveBeenCalledWith({
-      db: env.DB,
-      now,
-      compute: expect.any(Function),
-      seedDataSnapshot: true,
-    });
-    expect(computePublicHomepagePayload).not.toHaveBeenCalled();
-    expect(dispatchWebhookToChannels).toHaveBeenCalledWith(
-      expect.objectContaining({
-        eventType: 'maintenance.started',
-        eventKey: `maintenance:1:started:${now - 60}`,
-        channels: [expect.objectContaining({ id: 1 })],
-      }),
-    );
+    expect(waitUntil).not.toHaveBeenCalled();
   });
 
-  it('keeps idle public refresh and maintenance notifications after a post-lease pause race', async () => {
+  it('keeps post-check public refresh and maintenance notifications after a post-lease pause race', async () => {
     const now = Math.floor(Date.now() / 1000);
     const env = createEnv({
-      dueRows: [],
+      dueRows: [makeDueMonitorRow()],
       schedulableMonitorPresent: [true, false],
       channels: [
         {
@@ -442,10 +457,11 @@ describe('scheduler/scheduled regression', () => {
     const waitUntil = vi.fn();
 
     await runScheduledTick(env, { waitUntil } as unknown as ExecutionContext);
+    await Promise.all(waitUntil.mock.calls.map((call) => call[0] as Promise<unknown>));
 
     expect(acquireLease).toHaveBeenCalledTimes(1);
     expect(releaseLease).toHaveBeenCalledTimes(1);
-    expect(readSettings).not.toHaveBeenCalled();
+    expect(readSettings).toHaveBeenCalled();
     expect(waitUntil).toHaveBeenCalledTimes(2);
     await Promise.all(waitUntil.mock.calls.map((call) => call[0] as Promise<unknown>));
     expect(refreshPublicHomepageSnapshotIfNeeded).toHaveBeenCalledWith({
@@ -464,7 +480,7 @@ describe('scheduler/scheduled regression', () => {
   });
 
   it('self-invokes homepage refresh via service binding when SELF is configured', async () => {
-    const env = createEnv({ dueRows: [] }) as unknown as Env;
+    const env = createEnv({ dueRows: [makeDueMonitorRow()] }) as unknown as Env;
     env.ADMIN_TOKEN = 'test-admin-token';
     const selfFetch = vi.fn().mockResolvedValueOnce(new Response('ok', { status: 200 }));
     env.SELF = { fetch: selfFetch } as unknown as Fetcher;
@@ -481,13 +497,14 @@ describe('scheduler/scheduled regression', () => {
     expect(req.method).toBe('POST');
     expect(new URL(req.url).pathname).toBe('/api/v1/internal/refresh/homepage');
     expect(req.headers.get('Authorization')).toBe('Bearer test-admin-token');
-    expect(req.headers.get('Content-Type')).toBe('text/plain; charset=utf-8');
-    await expect(req.text()).resolves.toBe('test-admin-token');
+    expect(req.headers.get('Content-Type')).toBe('application/json; charset=utf-8');
+    const bodyJson = (await req.json()) as { runtime_updates: unknown };
+    expect(Array.isArray(bodyJson.runtime_updates)).toBe(true);
     expect(refreshPublicHomepageSnapshotIfNeeded).not.toHaveBeenCalled();
   });
 
   it('self-invokes sharded seed and assembler work after homepage refresh when enabled', async () => {
-    const env = createEnv({ dueRows: [] }) as unknown as Env;
+    const env = createEnv({ dueRows: [makeDueMonitorRow()] }) as unknown as Env;
     env.ADMIN_TOKEN = 'test-admin-token';
     env.UPTIMER_PUBLIC_SHARDED_FRAGMENT_SEED = '1';
     env.UPTIMER_SCHEDULED_SHARDED_FRAGMENT_SEED = '1';
@@ -577,7 +594,7 @@ describe('scheduler/scheduled regression', () => {
   });
 
   it('skips monolithic homepage refresh in the gated sharded scheduled mode', async () => {
-    const env = createEnv({ dueRows: [] }) as unknown as Env;
+    const env = createEnv({ dueRows: [makeDueMonitorRow()] }) as unknown as Env;
     env.ADMIN_TOKEN = 'test-admin-token';
     env.UPTIMER_PUBLIC_SHARDED_FRAGMENT_SEED = '1';
     env.UPTIMER_SCHEDULED_SHARDED_FRAGMENT_SEED = '1';
@@ -621,7 +638,7 @@ describe('scheduler/scheduled regression', () => {
       monitor_limit: 2,
     });
     expect(logSpy).toHaveBeenCalledWith(
-      'scheduled: homepage_refresh_skip reason=sharded_public_snapshots runtime_updates=0',
+      'scheduled: sharded_continuation_start step=seed continued=1',
     );
     logSpy.mockRestore();
   });
@@ -818,7 +835,7 @@ describe('scheduler/scheduled regression', () => {
   });
 
   it('uses the equivalent direct homepage refresh core when the direct gate is enabled', async () => {
-    const env = createEnv({ dueRows: [] }) as unknown as Env;
+    const env = createEnv({ dueRows: [makeDueMonitorRow()] }) as unknown as Env;
     env.ADMIN_TOKEN = 'test-admin-token';
     env.UPTIMER_SCHEDULED_HOMEPAGE_DIRECT = '1';
     const selfFetch = vi.fn().mockResolvedValueOnce(new Response('ok', { status: 200 }));
@@ -838,8 +855,10 @@ describe('scheduler/scheduled regression', () => {
       env,
       now: Math.floor(Date.now() / 1000),
       scheduledRefreshRequest: true,
+      runtimeUpdates: expect.any(Array),
       trace: null,
       preferCachedBaseSnapshot: true,
+      scheduledRuntimeSnapshotBaseline: expect.anything(),
     });
     expect(logSpy).toHaveBeenCalledWith(
       expect.stringContaining('scheduled: homepage_refresh_direct route=internal/homepage-refresh mode=scheduled direct=1 ok=1 refreshed=1'),
@@ -904,7 +923,7 @@ describe('scheduler/scheduled regression', () => {
   });
 
   it('emits scheduler trace headers and logs child refresh trace details when tracing is enabled', async () => {
-    const env = createEnv({ dueRows: [] }) as unknown as Env;
+    const env = createEnv({ dueRows: [makeDueMonitorRow()] }) as unknown as Env;
     env.ADMIN_TOKEN = 'test-admin-token';
     env.UPTIMER_TRACE_SCHEDULED_REFRESH = '1';
     env.UPTIMER_TRACE_TOKEN = 'trace-token';
@@ -940,7 +959,7 @@ describe('scheduler/scheduled regression', () => {
   });
 
   it('does not emit scheduler trace headers without a trace token', async () => {
-    const env = createEnv({ dueRows: [] }) as unknown as Env;
+    const env = createEnv({ dueRows: [makeDueMonitorRow()] }) as unknown as Env;
     env.ADMIN_TOKEN = 'test-admin-token';
     env.UPTIMER_TRACE_SCHEDULED_REFRESH = '1';
     const selfFetch = vi.fn().mockResolvedValueOnce(
@@ -1413,7 +1432,7 @@ describe('scheduler/scheduled regression', () => {
   });
 
   it('falls back to inline homepage refresh when the internal refresh service fails', async () => {
-    const env = createEnv({ dueRows: [] }) as unknown as Env;
+    const env = createEnv({ dueRows: [makeDueMonitorRow()] }) as unknown as Env;
     env.ADMIN_TOKEN = 'test-admin-token';
     env.SELF = {
       fetch: vi.fn().mockRejectedValueOnce(new Error('service refresh failed')),
@@ -1492,7 +1511,7 @@ describe('scheduler/scheduled regression', () => {
   });
 
   it('uses the current time when inline homepage refresh starts after a delayed service failure', async () => {
-    const env = createEnv({ dueRows: [] }) as unknown as Env;
+    const env = createEnv({ dueRows: [makeDueMonitorRow()] }) as unknown as Env;
     env.ADMIN_TOKEN = 'test-admin-token';
     const delayedTime = new Date('2026-02-17T00:02:42.000Z');
     const delayedNow = Math.floor(delayedTime.valueOf() / 1000);
@@ -1591,7 +1610,7 @@ describe('scheduler/scheduled regression', () => {
     vi.mocked(refreshPublicHomepageSnapshotIfNeeded).mockRejectedValueOnce(
       new Error('inline refresh failed'),
     );
-    const env = createEnv({ dueRows: [] }) as unknown as Env;
+    const env = createEnv({ dueRows: [makeDueMonitorRow()] }) as unknown as Env;
     env.ADMIN_TOKEN = 'test-admin-token';
     env.SELF = {
       fetch: vi.fn().mockRejectedValueOnce(new Error('service refresh failed')),
@@ -2054,7 +2073,7 @@ describe('scheduler/scheduled regression', () => {
       new Error('snapshot refresh failed'),
     );
 
-    const env = createEnv({ dueRows: [] });
+    const env = createEnv({ dueRows: [makeDueMonitorRow()] });
     const waitUntil = vi.fn();
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
@@ -2691,7 +2710,7 @@ describe('scheduler/scheduled regression', () => {
 
     await runScheduledTick(env, { waitUntil } as unknown as ExecutionContext);
 
-    expect(waitUntil).toHaveBeenCalledTimes(3);
+    expect(waitUntil).toHaveBeenCalledTimes(2);
     await Promise.all(waitUntil.mock.calls.map((c) => c[0] as Promise<unknown>));
 
     expect(dispatchWebhookToChannels).toHaveBeenCalledWith(
@@ -2764,7 +2783,7 @@ describe('scheduler/scheduled regression', () => {
     try {
       await runScheduledTick(env, { waitUntil } as unknown as ExecutionContext);
 
-      expect(waitUntil).toHaveBeenCalledTimes(3);
+      expect(waitUntil).toHaveBeenCalledTimes(2);
       await Promise.all(waitUntil.mock.calls.map((call) => call[0] as Promise<unknown>));
 
       expect(errorSpy).toHaveBeenCalledWith(

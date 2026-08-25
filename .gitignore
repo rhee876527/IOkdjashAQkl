@@ -35,3 +35,8 @@ pnpm-debug.log*
 
 # Reference project (do not track in this repo)
 [U]ptimeFlare/
+
+# D1-Cut plan/agent docs
+CUT-D1-*
+PENDING-IMPLEMENTATION.md
+REMAINING.md

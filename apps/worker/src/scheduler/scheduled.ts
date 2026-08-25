@@ -43,6 +43,7 @@ const HOMEPAGE_REFRESH_SERVICE_TIMEOUT_MS = 15_000;
 const RUNTIME_FRAGMENTS_REFRESH_SERVICE_TIMEOUT_MS = 15_000;
 const SHARDED_PUBLIC_SNAPSHOT_SERVICE_TIMEOUT_MS = 15_000;
 const SHARDED_FRAGMENT_SEED_BATCH_SIZE = 5;
+const CHECK_RESULT_SAMPLE_EVERY_N_CHECKS = 5;
 const INTERNAL_SCHEDULED_CHECK_BATCH_TIMEOUT_MS = 30_000;
 const BATCH_EXECUTION_LOCK_PREFIX = 'scheduler:batch:';
 const MONITOR_EXECUTION_LOCK_PREFIX = 'scheduler:batch-monitor:';
@@ -1426,6 +1427,16 @@ function toCheckResultBindings(completed: CompletedDueMonitor): unknown[] {
   ];
 }
 
+function shouldSampleCheckResult(completed: CompletedDueMonitor): boolean {
+  if (CHECK_RESULT_SAMPLE_EVERY_N_CHECKS <= 1) {
+    return true;
+  }
+  if (completed.outcome.status !== 'up') {
+    return true;
+  }
+  return completed.checkedAt % (60 * CHECK_RESULT_SAMPLE_EVERY_N_CHECKS) === 0;
+}
+
 function toMonitorStateBindings(completed: CompletedDueMonitor): unknown[] {
   const { row, checkedAt, outcome, next, stateLastError } = completed;
   return [
@@ -1653,10 +1664,15 @@ async function persistCompletedMonitors(
     const statements: D1PreparedStatement[] = [];
 
     if (chunk.length > 0) {
-      const checkResultBindings = chunk.flatMap((monitor) => toCheckResultBindings(monitor));
-      statements.push(
-        getInsertCheckResultStatement(db, templates, chunk.length).bind(...checkResultBindings),
-      );
+      const sampledChunk = chunk.filter((monitor) => shouldSampleCheckResult(monitor));
+      const checkResultBindings = sampledChunk.flatMap((monitor) => toCheckResultBindings(monitor));
+      if (checkResultBindings.length > 0) {
+        statements.push(
+          getInsertCheckResultStatement(db, templates, sampledChunk.length).bind(
+            ...checkResultBindings,
+          ),
+        );
+      }
 
       const monitorStateBindings = chunk.flatMap((monitor) => toMonitorStateBindings(monitor));
       statements.push(
@@ -1884,8 +1900,6 @@ export async function runScheduledTick(env: Env, ctx: ExecutionContext): Promise
     if (shouldLogScheduledRefresh(env)) {
       console.log('scheduled: idle no runnable monitors');
     }
-    await initializeNotifications();
-    ctx.waitUntil(queueHomepageRefresh());
   };
 
   if (!(await hasSchedulableMonitors(env.DB))) {
@@ -1913,14 +1927,7 @@ export async function runScheduledTick(env: Env, ctx: ExecutionContext): Promise
     const due = await listDueMonitors(env.DB, checkedAt);
 
     if (due.length === 0) {
-      const hasRunnableMonitor = await hasSchedulableMonitors(env.DB);
-      if (!hasRunnableMonitor) {
-        await queueIdleWork();
-        return;
-      }
       await initializeNotifications();
-      schedulerLease.assertHeld('queueing homepage refresh');
-      ctx.waitUntil(queueHomepageRefresh());
       return;
     }
 

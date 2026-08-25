@@ -1143,6 +1143,29 @@ export async function writePublicMonitorRuntimeSnapshot(
     totalsBodyJson,
     totalsSnapshot,
   );
+  await writePublicMonitorRuntimeSnapshotRows(db, snapshot, totalsSnapshot, bodyJson, writeNow);
+}
+
+async function writePublicMonitorRuntimeSnapshotRows(
+  db: D1Database,
+  snapshot: PublicMonitorRuntimeSnapshot,
+  totalsSnapshot: PublicMonitorRuntimeTotalsSnapshot,
+  bodyJson: string,
+  writeNow: number,
+): Promise<void> {
+  const cached = readRuntimeSnapshotStatement(db);
+  let existingBodyJson: string | null = null;
+  try {
+    const row = await cached
+      .bind(MONITOR_RUNTIME_SNAPSHOT_KEY)
+      .first<{ generated_at: number; body_json: string }>();
+    existingBodyJson = row?.body_json ?? null;
+  } catch (err) {
+    console.warn('runtime snapshot dedup read failed; proceeding with upsert', err);
+  }
+  if (existingBodyJson === bodyJson) {
+    return;
+  }
   await upsertRuntimeSnapshotRowsStatement(db, snapshot, totalsSnapshot, writeNow).run();
 }
 

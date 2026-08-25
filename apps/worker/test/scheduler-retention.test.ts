@@ -71,6 +71,14 @@ describe('scheduler/retention', () => {
           return { meta: { changes: deletes.shift() ?? 0 } };
         },
       },
+      {
+        match: 'delete from notification_deliveries',
+        run: () => ({ meta: { changes: 0 } }),
+      },
+      {
+        match: 'delete from locks',
+        run: () => ({ meta: { changes: 0 } }),
+      },
     ]);
 
     const scheduledTime = Date.UTC(2026, 1, 18, 0, 0, 0);
@@ -115,5 +123,39 @@ describe('scheduler/retention', () => {
 
     await runRetention(env, { scheduledTime: 1 } as ScheduledController);
     expect(runCalls).toHaveLength(0);
+  });
+
+  it('cleans up notification_deliveries beyond 90d and expired locks', async () => {
+    const deliveryCalls: unknown[][] = [];
+    const lockCalls: unknown[][] = [];
+    const env = createEnv([
+      {
+        match: 'delete from check_results',
+        run: () => ({ meta: { changes: 0 } }),
+      },
+      {
+        match: 'delete from notification_deliveries',
+        run: (args) => {
+          deliveryCalls.push(args);
+          return { meta: { changes: 3 } };
+        },
+      },
+      {
+        match: 'delete from locks',
+        run: (args) => {
+          lockCalls.push(args);
+          return { meta: { changes: 2 } };
+        },
+      },
+    ]);
+
+    const scheduledTime = Date.UTC(2026, 1, 18, 0, 0, 0);
+    await runRetention(env, { scheduledTime } as ScheduledController);
+
+    expect(deliveryCalls).toHaveLength(1);
+    expect(deliveryCalls[0]?.[0]).toBe(Math.floor(scheduledTime / 1000) - 90 * 86400);
+    expect(deliveryCalls[0]?.[1]).toBe(5000);
+    expect(lockCalls).toHaveLength(1);
+    expect(lockCalls[0]?.[0]).toBe(Math.floor(scheduledTime / 1000) - 60);
   });
 });

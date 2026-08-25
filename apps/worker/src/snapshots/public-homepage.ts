@@ -17,6 +17,9 @@ import type { PublicSnapshotFragmentRow } from './public-fragments';
 const SNAPSHOT_KEY = 'homepage';
 const SNAPSHOT_ARTIFACT_KEY = 'homepage:artifact';
 export const HOMEPAGE_ARTIFACT_MONITOR_FRAGMENTS_KEY = 'homepage:artifact:monitors';
+export const INCIDENTS_FEED_KEY = 'incidents-feed';
+export const MAINTENANCE_FEED_KEY = 'maintenance-feed';
+export const SITE_SETTINGS_KEY = 'site-settings';
 
 const homepageArtifactMonitorFragmentSchema = z.object({
   id: z.number().int().positive(),
