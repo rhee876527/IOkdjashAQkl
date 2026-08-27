@@ -145,6 +145,23 @@ async function listCheckRowsForMonitorBatch(
   return results ?? [];
 }
 
+const SAMPLE_GRID_SEC = 60 * 5;
+
+function gcd(a: number, b: number): number {
+  while (b !== 0) {
+    const t = a % b;
+    a = b;
+    b = t;
+  }
+  return a;
+}
+
+function maxSampledGapSec(intervalSec: number): number {
+  const branch = gcd(intervalSec, 60);
+  const lcm = (SAMPLE_GRID_SEC * branch) / gcd(SAMPLE_GRID_SEC, branch);
+  return lcm + 60 * branch;
+}
+
 export async function runDailyRollup(
   env: Env,
   controller: ScheduledController,
@@ -193,7 +210,10 @@ export async function runDailyRollup(
     const monitorIds = monitorBatch.map((monitor) => monitor.id);
     const checkRowsByStart = groupMonitorRowsByNumber(
       monitorBatch,
-      (monitor) => (rangeStartByMonitorId.get(monitor.id) ?? targetDayStart) - monitor.interval_sec * 2,
+      (monitor) => {
+        const unknownDelay = maxSampledGapSec(monitor.interval_sec);
+        return (rangeStartByMonitorId.get(monitor.id) ?? targetDayStart) - unknownDelay;
+      },
     );
     const [outageRows, checkRowGroups] = await Promise.all([
       listOutageRowsForMonitorBatch(env.DB, monitorIds, targetDayEnd, earliestRangeStart),
@@ -235,7 +255,13 @@ export async function runDailyRollup(
         status: toCheckStatus(r.status),
       }));
 
-      const unknownIntervals = buildUnknownIntervals(rangeStart, rangeEnd, m.interval_sec, checks);
+      const unknownIntervals = buildUnknownIntervals(
+        rangeStart,
+        rangeEnd,
+        m.interval_sec,
+        checks,
+        maxSampledGapSec(m.interval_sec),
+      );
       const unknown_sec = Math.max(
         0,
         sumIntervals(unknownIntervals) - overlapSeconds(unknownIntervals, downtimeIntervals),

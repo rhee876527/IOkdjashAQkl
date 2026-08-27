@@ -102,12 +102,14 @@ export function buildUnknownIntervals(
   rangeEnd: number,
   intervalSec: number,
   checks: Array<{ checked_at: number; status: string }>,
+  unknownDelaySec?: number,
 ): Interval[] {
   if (rangeEnd <= rangeStart) return [];
   if (!Number.isFinite(intervalSec) || intervalSec <= 0) {
     return [{ start: rangeStart, end: rangeEnd }];
   }
 
+  const delay = unknownDelaySec ?? intervalSec * 2;
   let lastCheck: { checked_at: number; status: string } | null = null;
   let cursor = rangeStart;
 
@@ -127,9 +129,8 @@ export function buildUnknownIntervals(
       return;
     }
 
-    const validUntil = lastCheck.checked_at + intervalSec * 2;
+    const validUntil = lastCheck.checked_at + delay;
 
-    // Allow up to 2x interval jitter before treating gaps as UNKNOWN (matches status-page stale threshold).
     if (segStart >= validUntil) {
       addUnknown(segStart, segEnd);
       return;
