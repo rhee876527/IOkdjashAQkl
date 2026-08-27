@@ -147,7 +147,7 @@ describe('scheduler/daily-rollup', () => {
     expect(checkQueryArgs[0]?.slice(0, 2)).toEqual([1, 2]);
     expect(outageQueryArgs[0]?.at(-2)).toBe(targetDayEnd);
     expect(outageQueryArgs[0]?.at(-1)).toBe(targetDayStart);
-    expect(checkQueryArgs[0]?.at(-2)).toBe(targetDayStart - 120);
+    expect(checkQueryArgs[0]?.at(-2)).toBe(targetDayStart - 3_900);
     expect(checkQueryArgs[0]?.at(-1)).toBe(targetDayEnd);
     expect(rollupInsertArgs).toHaveLength(2);
     expect(rollupInsertArgs[0]?.[0]).toBe(1);
@@ -208,9 +208,8 @@ describe('scheduler/daily-rollup', () => {
       { waitUntil: vi.fn() } as unknown as ExecutionContext,
     );
 
-    expect(checkQueryArgs).toHaveLength(2);
-    expect(checkQueryArgs[0]).toEqual([1, 2, targetDayStart - 120, targetDayEnd]);
-    expect(checkQueryArgs[1]).toEqual([3, targetDayStart - 7_200, targetDayEnd]);
+    expect(checkQueryArgs).toHaveLength(1);
+    expect(checkQueryArgs[0]).toEqual([1, 2, 3, targetDayStart - 3_900, targetDayEnd]);
   });
 
   it('chunks monitor batches to stay under D1 variable limits', async () => {
