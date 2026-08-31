@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 
 import { getDb, monitors } from '@uptimer/db';
+import { maxSampledGapSec } from '../analytics/uptime';
 
 import type { Env } from '../env';
 import { hasValidAdminTokenRequest } from '../middleware/auth';
@@ -240,12 +241,14 @@ function buildUnknownIntervals(
   rangeEnd: number,
   intervalSec: number,
   checks: Array<{ checked_at: number; status: string }>,
+  unknownDelaySec?: number,
 ): Interval[] {
   if (rangeEnd <= rangeStart) return [];
   if (!Number.isFinite(intervalSec) || intervalSec <= 0) {
     return [{ start: rangeStart, end: rangeEnd }];
   }
 
+  const delay = unknownDelaySec ?? maxSampledGapSec(intervalSec);
   let lastCheck: { checked_at: number; status: string } | null = null;
   let cursor = rangeStart;
 
@@ -265,7 +268,7 @@ function buildUnknownIntervals(
       return;
     }
 
-    const validUntil = lastCheck.checked_at + intervalSec * 2;
+    const validUntil = lastCheck.checked_at + delay;
 
     // Allow up to 2x interval jitter before treating gaps as UNKNOWN (matches status-page stale threshold).
     if (segStart >= validUntil) {
@@ -1604,7 +1607,7 @@ async function computePartialUptimeTotals(
     return { total_sec: 0, downtime_sec: 0, unknown_sec: 0, uptime_sec: 0 };
   }
 
-  const checksStart = rangeStart - intervalSec * 2;
+  const checksStart = rangeStart - maxSampledGapSec(intervalSec);
   const { results: checkRows } = await db
     .prepare(
       `
@@ -1668,6 +1671,7 @@ async function computePartialUptimeTotals(
     rangeEnd,
     intervalSec,
     checksForUnknown,
+    maxSampledGapSec(intervalSec),
   );
   const unknown_sec = Math.max(
     0,

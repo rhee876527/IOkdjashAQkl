@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { maxSampledGapSec } from '../analytics/uptime';
 
 export const MONITOR_RUNTIME_SNAPSHOT_KEY = 'monitor-runtime';
 export const MONITOR_RUNTIME_TOTALS_SNAPSHOT_KEY = 'monitor-runtime:totals';
@@ -1264,7 +1265,7 @@ function computeSegmentTotals(opts: {
     };
   }
 
-  const validUntil = opts.lastCheckedAt + Math.max(0, opts.intervalSec) * 2;
+  const validUntil = opts.lastCheckedAt + maxSampledGapSec(opts.intervalSec);
   const unknownStart = Math.max(segmentStart, validUntil);
   const unknownSec = segmentEnd > unknownStart ? segmentEnd - unknownStart : 0;
 

@@ -7,6 +7,7 @@ import { AppError, handleError, handleNotFound } from '../middleware/errors';
 import { cachePublic } from '../middleware/cache-public';
 import {
   buildUnknownIntervals,
+  maxSampledGapSec,
   mergeIntervals,
   overlapSeconds,
   rangeToSeconds,
@@ -514,8 +515,8 @@ async function computePartialUptimeTotalsSql(
   const row = await db
     .prepare(
       `
-        WITH input(monitor_id, interval_sec, created_at, last_checked_at) AS (
-          VALUES (?3, ?4, ?5, ?6)
+        WITH input(monitor_id, interval_sec, created_at, last_checked_at, unknown_delay_sec) AS (
+          VALUES (?3, ?4, ?5, ?6, ?7)
         ),
         first_checks AS (
           SELECT monitor_id, MIN(checked_at) AS first_check_at
@@ -529,6 +530,7 @@ async function computePartialUptimeTotalsSql(
           SELECT
             i.monitor_id AS monitor_id,
             i.interval_sec AS interval_sec,
+            i.unknown_delay_sec AS unknown_delay_sec,
             CASE
               WHEN i.created_at >= ?1 THEN
                 COALESCE(
@@ -562,6 +564,7 @@ async function computePartialUptimeTotalsSql(
             cr.checked_at AS checked_at,
             cr.status AS status,
             e.interval_sec AS interval_sec,
+              e.unknown_delay_sec AS unknown_delay_sec,
             e.start_at AS start_at,
             lag(cr.checked_at) OVER (
               PARTITION BY cr.monitor_id
@@ -574,7 +577,7 @@ async function computePartialUptimeTotalsSql(
           FROM check_results cr
           JOIN effective e ON e.monitor_id = cr.monitor_id
           WHERE e.start_at IS NOT NULL
-            AND cr.checked_at >= max(0, e.start_at - e.interval_sec * 2)
+            AND cr.checked_at >= max(0, e.start_at - e.unknown_delay_sec)
             AND cr.checked_at < ?2
         ),
         unknown_checks AS (
@@ -585,7 +588,7 @@ async function computePartialUptimeTotalsSql(
               WHEN prev_status = 'unknown' THEN (CASE WHEN prev_at >= start_at THEN prev_at ELSE start_at END)
               ELSE max(
                 (CASE WHEN prev_at >= start_at THEN prev_at ELSE start_at END),
-                prev_at + interval_sec * 2
+                prev_at + unknown_delay_sec
               )
             END AS seg_start,
             checked_at AS seg_end
@@ -628,7 +631,7 @@ async function computePartialUptimeTotalsSql(
             CASE
               WHEN la.checked_at IS NULL THEN coalesce(lir.checked_at, e.start_at)
               WHEN la.status = 'unknown' THEN coalesce(lir.checked_at, e.start_at)
-              ELSE max(coalesce(lir.checked_at, e.start_at), la.checked_at + e.interval_sec * 2)
+              ELSE max(coalesce(lir.checked_at, e.start_at), la.checked_at + e.unknown_delay_sec)
             END AS seg_start,
             ?2 AS seg_end
           FROM effective e
@@ -673,7 +676,7 @@ async function computePartialUptimeTotalsSql(
         WHERE e.start_at IS NOT NULL
       `,
     )
-    .bind(rangeStart, rangeEnd, monitorId, intervalSec, createdAt, lastCheckedAt)
+    .bind(rangeStart, rangeEnd, monitorId, intervalSec, createdAt, lastCheckedAt, maxSampledGapSec(intervalSec))
     .first<{
       start_at: number | null;
       total_sec: number | null;
@@ -714,7 +717,7 @@ async function computePartialUptimeTotalsLegacy(
     return { total_sec: 0, downtime_sec: 0, unknown_sec: 0, uptime_sec: 0 };
   }
 
-  const checksStart = rangeStart - intervalSec * 2;
+  const checksStart = rangeStart - maxSampledGapSec(intervalSec);
   const { results: checkRows } = await db
     .prepare(
       `
@@ -778,6 +781,7 @@ async function computePartialUptimeTotalsLegacy(
     rangeEnd,
     intervalSec,
     checksForUnknown,
+    maxSampledGapSec(intervalSec),
   );
   const unknown_sec = Math.max(
     0,
@@ -1459,6 +1463,19 @@ publicUiRoutes.get('/monitors/:id/uptime', async (c) => {
             SELECT
               i.monitor_id AS monitor_id,
               i.interval_sec AS interval_sec,
+              (300 + 60 * CASE
+                WHEN i.interval_sec % 60 = 0 THEN 60
+                WHEN i.interval_sec % 30 = 0 THEN 30
+                WHEN i.interval_sec % 20 = 0 THEN 20
+                WHEN i.interval_sec % 15 = 0 THEN 15
+                WHEN i.interval_sec % 12 = 0 THEN 12
+                WHEN i.interval_sec % 10 = 0 THEN 10
+                WHEN i.interval_sec % 6 = 0 THEN 6
+                WHEN i.interval_sec % 5 = 0 THEN 5
+                WHEN i.interval_sec % 4 = 0 THEN 4
+                WHEN i.interval_sec % 3 = 0 THEN 3
+                WHEN i.interval_sec % 2 = 0 THEN 2
+                ELSE 1 END) AS unknown_delay_sec,
               CASE
                 WHEN i.created_at >= ?1 THEN
                   COALESCE(
@@ -1492,6 +1509,7 @@ publicUiRoutes.get('/monitors/:id/uptime', async (c) => {
               cr.checked_at AS checked_at,
               cr.status AS status,
               e.interval_sec AS interval_sec,
+              e.unknown_delay_sec AS unknown_delay_sec,
               e.start_at AS start_at,
               lag(cr.checked_at) OVER (
                 PARTITION BY cr.monitor_id
@@ -1504,7 +1522,7 @@ publicUiRoutes.get('/monitors/:id/uptime', async (c) => {
             FROM check_results cr
             JOIN effective e ON e.monitor_id = cr.monitor_id
             WHERE e.start_at IS NOT NULL
-              AND cr.checked_at >= max(0, e.start_at - e.interval_sec * 2)
+              AND cr.checked_at >= max(0, e.start_at - e.unknown_delay_sec)
               AND cr.checked_at < ?2
           ),
           unknown_checks AS (
@@ -1515,7 +1533,7 @@ publicUiRoutes.get('/monitors/:id/uptime', async (c) => {
                 WHEN prev_status = 'unknown' THEN (CASE WHEN prev_at >= start_at THEN prev_at ELSE start_at END)
                 ELSE max(
                   (CASE WHEN prev_at >= start_at THEN prev_at ELSE start_at END),
-                  prev_at + interval_sec * 2
+                  prev_at + unknown_delay_sec
                 )
               END AS seg_start,
               checked_at AS seg_end
@@ -1558,7 +1576,7 @@ publicUiRoutes.get('/monitors/:id/uptime', async (c) => {
               CASE
                 WHEN la.checked_at IS NULL THEN coalesce(lir.checked_at, e.start_at)
                 WHEN la.status = 'unknown' THEN coalesce(lir.checked_at, e.start_at)
-                ELSE max(coalesce(lir.checked_at, e.start_at), la.checked_at + e.interval_sec * 2)
+                ELSE max(coalesce(lir.checked_at, e.start_at), la.checked_at + e.unknown_delay_sec)
               END AS seg_start,
               ?2 AS seg_end
             FROM effective e
@@ -1630,6 +1648,19 @@ publicUiRoutes.get('/monitors/:id/uptime', async (c) => {
             SELECT
               i.monitor_id AS monitor_id,
               i.interval_sec AS interval_sec,
+              (300 + 60 * CASE
+                WHEN i.interval_sec % 60 = 0 THEN 60
+                WHEN i.interval_sec % 30 = 0 THEN 30
+                WHEN i.interval_sec % 20 = 0 THEN 20
+                WHEN i.interval_sec % 15 = 0 THEN 15
+                WHEN i.interval_sec % 12 = 0 THEN 12
+                WHEN i.interval_sec % 10 = 0 THEN 10
+                WHEN i.interval_sec % 6 = 0 THEN 6
+                WHEN i.interval_sec % 5 = 0 THEN 5
+                WHEN i.interval_sec % 4 = 0 THEN 4
+                WHEN i.interval_sec % 3 = 0 THEN 3
+                WHEN i.interval_sec % 2 = 0 THEN 2
+                ELSE 1 END) AS unknown_delay_sec,
               CASE
                 WHEN i.created_at >= ?1 THEN
                   COALESCE(
@@ -1663,6 +1694,7 @@ publicUiRoutes.get('/monitors/:id/uptime', async (c) => {
               cr.checked_at AS checked_at,
               cr.status AS status,
               e.interval_sec AS interval_sec,
+              e.unknown_delay_sec AS unknown_delay_sec,
               e.start_at AS start_at,
               lag(cr.checked_at) OVER (
                 PARTITION BY cr.monitor_id
@@ -1675,7 +1707,7 @@ publicUiRoutes.get('/monitors/:id/uptime', async (c) => {
             FROM check_results cr
             JOIN effective e ON e.monitor_id = cr.monitor_id
             WHERE e.start_at IS NOT NULL
-              AND cr.checked_at >= max(0, e.start_at - e.interval_sec * 2)
+              AND cr.checked_at >= max(0, e.start_at - e.unknown_delay_sec)
               AND cr.checked_at < ?2
           ),
           unknown_checks AS (
@@ -1686,7 +1718,7 @@ publicUiRoutes.get('/monitors/:id/uptime', async (c) => {
                 WHEN prev_status = 'unknown' THEN (CASE WHEN prev_at >= start_at THEN prev_at ELSE start_at END)
                 ELSE max(
                   (CASE WHEN prev_at >= start_at THEN prev_at ELSE start_at END),
-                  prev_at + interval_sec * 2
+                  prev_at + unknown_delay_sec
                 )
               END AS seg_start,
               checked_at AS seg_end
@@ -1729,7 +1761,7 @@ publicUiRoutes.get('/monitors/:id/uptime', async (c) => {
               CASE
                 WHEN la.checked_at IS NULL THEN coalesce(lir.checked_at, e.start_at)
                 WHEN la.status = 'unknown' THEN coalesce(lir.checked_at, e.start_at)
-                ELSE max(coalesce(lir.checked_at, e.start_at), la.checked_at + e.interval_sec * 2)
+                ELSE max(coalesce(lir.checked_at, e.start_at), la.checked_at + e.unknown_delay_sec)
               END AS seg_start,
               ?2 AS seg_end
             FROM effective e

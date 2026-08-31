@@ -11,6 +11,7 @@ import {
 } from '../analytics/latency';
 import {
   buildUnknownIntervals,
+  maxSampledGapSec,
   mergeIntervals,
   utcDayStart,
   overlapSeconds,
@@ -299,7 +300,7 @@ async function computePartialDayRow(
   );
   const downtime_sec = sumIntervals(downtimeIntervals);
 
-  const checksStart = start - monitor.interval_sec * 2;
+  const checksStart = start - maxSampledGapSec(monitor.interval_sec);
   const { results: checkRows } = await db
     .prepare(
       `
@@ -323,6 +324,7 @@ async function computePartialDayRow(
     end,
     monitor.interval_sec,
     normalizedChecks,
+    maxSampledGapSec(monitor.interval_sec),
   );
   const unknown_sec = Math.max(
     0,
@@ -445,9 +447,10 @@ adminAnalyticsRoutes.get('/monitors/:id', async (c) => {
     const downtimeIntervals = clampOutageIntervals(outageRows ?? [], rangeStart, rangeEnd);
     const downtime_sec = sumIntervals(downtimeIntervals);
 
-    const checksStart = rangeStart - monitor.interval_sec * 2;
-    const { results: checkRows } = await c.env.DB.prepare(
-      `
+    const checksStart = rangeStart - maxSampledGapSec(monitor.interval_sec);
+    const { results: checkRows } = await c.env.DB
+      .prepare(
+        `
         SELECT checked_at, status, latency_ms
         FROM check_results
         WHERE monitor_id = ?1
@@ -455,11 +458,11 @@ adminAnalyticsRoutes.get('/monitors/:id', async (c) => {
           AND checked_at < ?3
         ORDER BY checked_at
       `,
-    )
+      )
       .bind(id, checksStart, rangeEnd)
       .all<CheckRow>();
 
-    const normalizedChecks = (checkRows ?? []).map((r) => ({
+    const normalizedChecks = (checkRows ?? []).map((r: CheckRow) => ({
       checked_at: r.checked_at,
       status: toCheckStatus(r.status),
     }));
@@ -468,6 +471,7 @@ adminAnalyticsRoutes.get('/monitors/:id', async (c) => {
       rangeEnd,
       monitor.interval_sec,
       normalizedChecks,
+      maxSampledGapSec(monitor.interval_sec),
     );
     const unknown_sec = Math.max(
       0,

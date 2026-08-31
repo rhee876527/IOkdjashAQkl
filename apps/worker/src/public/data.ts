@@ -2,6 +2,7 @@ import type { PublicStatusResponse } from '../schemas/public-status';
 
 import {
   buildUnknownIntervals,
+  maxSampledGapSec,
   mergeIntervals,
   overlapSeconds,
   sumIntervals,
@@ -129,7 +130,7 @@ const UPTIME_DAYS = 60;
 const HEARTBEAT_POINTS = 60;
 const D1_MAX_SQL_VARIABLES = 100;
 const TODAY_PARTIAL_UPTIME_FIXED_BINDINGS = 2;
-const TODAY_PARTIAL_UPTIME_BINDINGS_PER_MONITOR = 4;
+const TODAY_PARTIAL_UPTIME_BINDINGS_PER_MONITOR = 5;
 const TODAY_PARTIAL_UPTIME_SQL_CHUNK_SIZE = Math.max(
   1,
   Math.floor(
@@ -581,14 +582,14 @@ async function computeTodayPartialUptimeBatchSql(
     const chunk = normalizedMonitors.slice(start, start + TODAY_PARTIAL_UPTIME_SQL_CHUNK_SIZE);
     const valuesPlaceholders = chunk
       .map((_, index) => {
-        const base = 3 + index * 4;
-        return `(?${base}, ?${base + 1}, ?${base + 2}, ?${base + 3})`;
+        const base = 3 + index * 5;
+        return `(?${base}, ?${base + 1}, ?${base + 2}, ?${base + 3}, ?${base + 4})`;
       })
       .join(', ');
 
     const stmt = db.prepare(
       `
-      WITH input(monitor_id, interval_sec, created_at, last_checked_at) AS (
+      WITH input(monitor_id, interval_sec, created_at, last_checked_at, unknown_delay_sec) AS (
         VALUES ${valuesPlaceholders}
       ),
       first_checks AS (
@@ -603,6 +604,7 @@ async function computeTodayPartialUptimeBatchSql(
         SELECT
           i.monitor_id AS monitor_id,
           i.interval_sec AS interval_sec,
+          i.unknown_delay_sec AS unknown_delay_sec,
           CASE
             WHEN i.created_at >= ?1 THEN
               COALESCE(
@@ -636,6 +638,7 @@ async function computeTodayPartialUptimeBatchSql(
           cr.checked_at AS checked_at,
           cr.status AS status,
           e.interval_sec AS interval_sec,
+          e.unknown_delay_sec AS unknown_delay_sec,
           e.start_at AS start_at,
           lag(cr.checked_at) OVER (
             PARTITION BY cr.monitor_id
@@ -648,7 +651,7 @@ async function computeTodayPartialUptimeBatchSql(
         FROM check_results cr
         JOIN effective e ON e.monitor_id = cr.monitor_id
         WHERE e.start_at IS NOT NULL
-          AND cr.checked_at >= max(0, e.start_at - e.interval_sec * 2)
+          AND cr.checked_at >= max(0, e.start_at - e.unknown_delay_sec)
           AND cr.checked_at < ?2
       ),
       unknown_checks AS (
@@ -659,7 +662,7 @@ async function computeTodayPartialUptimeBatchSql(
             WHEN prev_status = 'unknown' THEN (CASE WHEN prev_at >= start_at THEN prev_at ELSE start_at END)
             ELSE max(
               (CASE WHEN prev_at >= start_at THEN prev_at ELSE start_at END),
-              prev_at + interval_sec * 2
+              prev_at + unknown_delay_sec
             )
           END AS seg_start,
           checked_at AS seg_end
@@ -702,7 +705,7 @@ async function computeTodayPartialUptimeBatchSql(
           CASE
             WHEN la.checked_at IS NULL THEN coalesce(lir.checked_at, e.start_at)
             WHEN la.status = 'unknown' THEN coalesce(lir.checked_at, e.start_at)
-            ELSE max(coalesce(lir.checked_at, e.start_at), la.checked_at + e.interval_sec * 2)
+            ELSE max(coalesce(lir.checked_at, e.start_at), la.checked_at + e.unknown_delay_sec)
           END AS seg_start,
           ?2 AS seg_end
         FROM effective e
@@ -751,7 +754,13 @@ async function computeTodayPartialUptimeBatchSql(
 
     const args: unknown[] = [rangeStart, now];
     for (const monitor of chunk) {
-      args.push(monitor.id, monitor.interval_sec, monitor.created_at, monitor.last_checked_at);
+      args.push(
+        monitor.id,
+        monitor.interval_sec,
+        monitor.created_at,
+        monitor.last_checked_at,
+        maxSampledGapSec(monitor.interval_sec),
+      );
     }
 
     const { results } = await stmt
@@ -873,13 +882,14 @@ async function computeTodayPartialUptimeBatchLegacy(
     appendMapValue(downtimeById, r.monitor_id, { start, end });
   }
 
-  let maxIntervalSec = 0;
+  let maxGapSec = 0;
   for (const monitor of monitors) {
-    if (monitor.interval_sec > maxIntervalSec) {
-      maxIntervalSec = monitor.interval_sec;
+    const gap = maxSampledGapSec(monitor.interval_sec);
+    if (gap > maxGapSec) {
+      maxGapSec = gap;
     }
   }
-  const checksStart = Math.max(0, rangeStart - Math.max(0, maxIntervalSec) * 2);
+  const checksStart = Math.max(0, rangeStart - maxGapSec);
   const checkPlaceholders = ids.map((_, idx) => `?${idx + 1}`).join(', ');
   const { results: checkRows } = await db
     .prepare(
@@ -953,6 +963,7 @@ async function computeTodayPartialUptimeBatchLegacy(
       now,
       monitor.interval_sec,
       checksForUnknown,
+      maxSampledGapSec(monitor.interval_sec),
     );
     const unknown_sec = Math.max(
       0,
@@ -1053,7 +1064,7 @@ export async function buildPublicMonitorCards(
         ? false
         : r.last_checked_at === null
           ? true
-          : now - r.last_checked_at > r.interval_sec * 2;
+          : now - r.last_checked_at > maxSampledGapSec(r.interval_sec);
 
     const status = isInMaintenance ? 'maintenance' : isStale ? 'unknown' : stateStatus;
 

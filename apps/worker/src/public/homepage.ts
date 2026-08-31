@@ -50,6 +50,7 @@ import {
   monitorVisibilityPredicate,
   shouldIncludeStatusPageScopedItem,
 } from './visibility';
+import { maxSampledGapSec } from '../analytics/uptime';
 
 const PREVIEW_BATCH_LIMIT = 50;
 const UPTIME_DAYS = 60;
@@ -466,7 +467,7 @@ function computeHomepageMonitorPresentation(
       ? false
       : row.last_checked_at === null
         ? true
-        : now - row.last_checked_at > row.interval_sec * 2;
+        : now - row.last_checked_at > maxSampledGapSec(row.interval_sec);
 
   return {
     status: isInMaintenance ? 'maintenance' : isStale ? 'unknown' : stateStatus,
@@ -574,7 +575,7 @@ function reuseHistoricalRollupsFromBase(opts: {
       monitorCreatedAt: opts.monitorCreatedAt,
     });
     opts.totals.totalSec += totalSec;
-    opts.totals.uptimeSec += Math.max(0, totalSec - downtime - unknown);
+    opts.totals.uptimeSec += Math.max(0, totalSec - downtime);
   }
 
   opts.monitor.uptime_day_strip.day_start_at = dayStartAt;
@@ -831,7 +832,19 @@ async function readHomepageMonitorSummary(
               in_maintenance = 0
               AND normalized_status = 'down'
               AND last_checked_at IS NOT NULL
-              AND ?1 - last_checked_at <= interval_sec * 2
+              AND ?1 - last_checked_at <= (300 + 60 * CASE
+                WHEN interval_sec % 60 = 0 THEN 60
+                WHEN interval_sec % 30 = 0 THEN 30
+                WHEN interval_sec % 20 = 0 THEN 20
+                WHEN interval_sec % 15 = 0 THEN 15
+                WHEN interval_sec % 12 = 0 THEN 12
+                WHEN interval_sec % 10 = 0 THEN 10
+                WHEN interval_sec % 6 = 0 THEN 6
+                WHEN interval_sec % 5 = 0 THEN 5
+                WHEN interval_sec % 4 = 0 THEN 4
+                WHEN interval_sec % 3 = 0 THEN 3
+                WHEN interval_sec % 2 = 0 THEN 2
+                ELSE 1 END)
             THEN 1
             ELSE 0
           END
@@ -842,7 +855,19 @@ async function readHomepageMonitorSummary(
               in_maintenance = 0
               AND normalized_status = 'up'
               AND last_checked_at IS NOT NULL
-              AND ?1 - last_checked_at <= interval_sec * 2
+              AND ?1 - last_checked_at <= (300 + 60 * CASE
+                WHEN interval_sec % 60 = 0 THEN 60
+                WHEN interval_sec % 30 = 0 THEN 30
+                WHEN interval_sec % 20 = 0 THEN 20
+                WHEN interval_sec % 15 = 0 THEN 15
+                WHEN interval_sec % 12 = 0 THEN 12
+                WHEN interval_sec % 10 = 0 THEN 10
+                WHEN interval_sec % 6 = 0 THEN 6
+                WHEN interval_sec % 5 = 0 THEN 5
+                WHEN interval_sec % 4 = 0 THEN 4
+                WHEN interval_sec % 3 = 0 THEN 3
+                WHEN interval_sec % 2 = 0 THEN 2
+                ELSE 1 END)
             THEN 1
             ELSE 0
           END
@@ -857,13 +882,37 @@ async function readHomepageMonitorSummary(
                 in_maintenance = 0
                 AND normalized_status = 'down'
                 AND last_checked_at IS NOT NULL
-                AND ?1 - last_checked_at <= interval_sec * 2
+                AND ?1 - last_checked_at <= (300 + 60 * CASE
+                WHEN interval_sec % 60 = 0 THEN 60
+                WHEN interval_sec % 30 = 0 THEN 30
+                WHEN interval_sec % 20 = 0 THEN 20
+                WHEN interval_sec % 15 = 0 THEN 15
+                WHEN interval_sec % 12 = 0 THEN 12
+                WHEN interval_sec % 10 = 0 THEN 10
+                WHEN interval_sec % 6 = 0 THEN 6
+                WHEN interval_sec % 5 = 0 THEN 5
+                WHEN interval_sec % 4 = 0 THEN 4
+                WHEN interval_sec % 3 = 0 THEN 3
+                WHEN interval_sec % 2 = 0 THEN 2
+                ELSE 1 END)
               )
               OR (
                 in_maintenance = 0
                 AND normalized_status = 'up'
                 AND last_checked_at IS NOT NULL
-                AND ?1 - last_checked_at <= interval_sec * 2
+                AND ?1 - last_checked_at <= (300 + 60 * CASE
+                WHEN interval_sec % 60 = 0 THEN 60
+                WHEN interval_sec % 30 = 0 THEN 30
+                WHEN interval_sec % 20 = 0 THEN 20
+                WHEN interval_sec % 15 = 0 THEN 15
+                WHEN interval_sec % 12 = 0 THEN 12
+                WHEN interval_sec % 10 = 0 THEN 10
+                WHEN interval_sec % 6 = 0 THEN 6
+                WHEN interval_sec % 5 = 0 THEN 5
+                WHEN interval_sec % 4 = 0 THEN 4
+                WHEN interval_sec % 3 = 0 THEN 3
+                WHEN interval_sec % 2 = 0 THEN 2
+                ELSE 1 END)
               )
             THEN 0
             ELSE 1
@@ -1622,7 +1671,7 @@ function computePatchedHomepageSegmentTotals(opts: {
     return { downtimeSec: 0, unknownSec: totalSec };
   }
 
-  const validUntil = opts.lastCheckedAt + Math.max(0, opts.intervalSec) * 2;
+  const validUntil = opts.lastCheckedAt + maxSampledGapSec(opts.intervalSec);
   const unknownStart = Math.max(opts.segmentStart, validUntil);
   return {
     downtimeSec: 0,
@@ -1661,12 +1710,12 @@ function computePatchedHomepageUptimeDayContribution(opts: {
 
   return {
     totalSec,
-    uptimeSec: Math.max(0, totalSec - Math.max(0, opts.downtimeSec) - Math.max(0, opts.unknownSec)),
+    uptimeSec: Math.max(0, totalSec - Math.max(0, opts.downtimeSec)),
   };
 }
 
 function isFastPatchUpdateFresh(now: number, update: MonitorRuntimeUpdate): boolean {
-  return now - update.checked_at <= update.interval_sec * 2;
+  return now - update.checked_at <= maxSampledGapSec(update.interval_sec);
 }
 
 function tryPatchPublicHomepagePayloadFromRuntimeSnapshot(opts: {
@@ -1821,7 +1870,7 @@ function tryPatchPublicHomepagePayloadFromRuntimeSnapshot(opts: {
       const totalSec = Math.max(0, now - Math.max(todayStartAt, createdAt));
       const nextDowntimeSec = currentDowntime + segment.downtimeSec + tail.downtimeSec;
       const nextUnknownSec = currentUnknown + segment.unknownSec + tail.unknownSec;
-      const nextUptimeSec = Math.max(0, totalSec - nextDowntimeSec - nextUnknownSec);
+      const nextUptimeSec = Math.max(0, totalSec - nextDowntimeSec);
       todayTotals = {
         total_sec: totalSec,
         downtime_sec: nextDowntimeSec,
@@ -2105,7 +2154,7 @@ export function tryPatchPublicHomepagePayloadFromRuntimeUpdates(opts: {
     const totalSec = Math.max(0, now - Math.max(todayStartAt, update.created_at));
     const nextDowntimeSec = currentDowntime + segment.downtimeSec + tail.downtimeSec;
     const nextUnknownSec = currentUnknown + segment.unknownSec + tail.unknownSec;
-    const nextUptimeSec = Math.max(0, totalSec - nextDowntimeSec - nextUnknownSec);
+    const nextUptimeSec = Math.max(0, totalSec - nextDowntimeSec);
 
     downtimeSec[bucketIndex] = nextDowntimeSec;
     unknownSec[bucketIndex] = nextUnknownSec;

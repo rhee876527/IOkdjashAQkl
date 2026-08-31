@@ -85,7 +85,7 @@ describe('analytics/uptime', () => {
       { checked_at: 300, status: 'up' },
     ];
 
-    const unknown = buildUnknownIntervals(0, 600, 60, checks);
+    const unknown = buildUnknownIntervals(0, 600, 60, checks, 120);
     expect(unknown).toEqual([
       { start: 120, end: 300 },
       { start: 420, end: 600 },
@@ -109,7 +109,7 @@ describe('analytics/uptime', () => {
       { checked_at: 100, status: 'up' },
     ];
 
-    expect(buildUnknownIntervals(0, 300, 60, checks)).toEqual([{ start: 220, end: 300 }]);
+    expect(buildUnknownIntervals(0, 300, 60, checks, 120)).toEqual([{ start: 220, end: 300 }]);
   });
 
   it('marks windows unknown while the latest known status is unknown', () => {

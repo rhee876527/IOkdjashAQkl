@@ -97,6 +97,33 @@ function pushMergedInterval(intervals: Interval[], next: Interval): void {
   intervals.push({ start: next.start, end: next.end });
 }
 
+const SAMPLE_GRID_SEC = 60 * 5;
+
+function gcd(a: number, b: number): number {
+  a = Math.abs(a);
+  b = Math.abs(b);
+  while (b !== 0) {
+    const t = a % b;
+    a = b;
+    b = t;
+  }
+  return a;
+}
+
+const maxSampledGapCache = new Map<number, number>();
+
+export function maxSampledGapSec(intervalSec: number): number {
+  if (!Number.isFinite(intervalSec) || intervalSec <= 0) return 0;
+  const key = Math.floor(intervalSec);
+  const cached = maxSampledGapCache.get(key);
+  if (cached !== undefined) return cached;
+  const branch = gcd(key, 60);
+  const lcm = (SAMPLE_GRID_SEC * branch) / gcd(SAMPLE_GRID_SEC, branch);
+  const gap = lcm + 60 * branch;
+  maxSampledGapCache.set(key, gap);
+  return gap;
+}
+
 export function buildUnknownIntervals(
   rangeStart: number,
   rangeEnd: number,
@@ -109,7 +136,7 @@ export function buildUnknownIntervals(
     return [{ start: rangeStart, end: rangeEnd }];
   }
 
-  const delay = unknownDelaySec ?? intervalSec * 2;
+  const delay = unknownDelaySec ?? maxSampledGapSec(intervalSec);
   let lastCheck: { checked_at: number; status: string } | null = null;
   let cursor = rangeStart;
 

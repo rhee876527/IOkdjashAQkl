@@ -155,7 +155,7 @@ describe('public fast-path guards', () => {
           monitor_id: 1,
           interval_sec: 60,
           created_at: now - 600,
-          checked_at: now - 121,
+          checked_at: now - 4000,
           check_status: 'up',
           next_status: 'up',
           latency_ms: 55,
@@ -233,7 +233,7 @@ describe('public fast-path guards', () => {
           monitor_id: 1,
           interval_sec: 60,
           created_at: now - 600,
-          checked_at: now - 121,
+          checked_at: now - 4000,
           check_status: 'up',
           next_status: 'up',
           latency_ms: 55,
@@ -317,8 +317,8 @@ describe('public fast-path guards', () => {
         total_sec: 240,
         downtime_sec: 0,
         unknown_sec: 60,
-        uptime_sec: 180,
-        uptime_pct: 75,
+        uptime_sec: 240,
+        uptime_pct: 100,
       },
     ]);
     expect(patched?.monitors[0]?.uptime_30d).toEqual({
@@ -327,8 +327,8 @@ describe('public fast-path guards', () => {
       total_sec: 240,
       downtime_sec: 0,
       unknown_sec: 60,
-      uptime_sec: 180,
-      uptime_pct: 75,
+      uptime_sec: 240,
+      uptime_pct: 100,
     });
   });
 

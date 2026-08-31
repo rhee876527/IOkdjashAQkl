@@ -24,12 +24,12 @@ describe('public/data', () => {
 
     const handlers: FakeD1QueryHandler[] = [
       {
-        match: 'with input(monitor_id, interval_sec, created_at, last_checked_at) as (',
+        match: 'with input(monitor_id, interval_sec, created_at, last_checked_at, unknown_delay_sec) as (',
         all: (args) => {
           sqlChunkArgLengths.push(args.length);
 
           const ids: number[] = [];
-          for (let index = 2; index < args.length; index += 4) {
+          for (let index = 2; index < args.length; index += 5) {
             const id = args[index];
             if (typeof id === 'number') ids.push(id);
           }
@@ -54,11 +54,11 @@ describe('public/data', () => {
     );
 
     expect(warnSpy).not.toHaveBeenCalled();
-    expect(sqlChunkArgLengths).toEqual([98, 10]);
+    expect(sqlChunkArgLengths).toEqual([97, 37]);
     expect(Math.max(...sqlChunkArgLengths)).toBeLessThanOrEqual(100);
     expect(sqlChunkIds).toEqual([
-      Array.from({ length: 24 }, (_, index) => index + 1),
-      [25, 26],
+      Array.from({ length: 19 }, (_, index) => index + 1),
+      Array.from({ length: 7 }, (_, index) => 19 + index + 1),
     ]);
     expect(result.size).toBe(26);
     expect(result.get(1)).toMatchObject({

@@ -555,7 +555,7 @@ describe('public/status payload regression', () => {
       day_start_at: dayStart,
       total_sec: 600,
       downtime_sec: 60,
-      unknown_sec: 360,
+      unknown_sec: 0,
       uptime_sec: 540,
     });
     expect(today?.uptime_pct).toBeCloseTo(90, 6);

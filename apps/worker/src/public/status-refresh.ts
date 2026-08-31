@@ -2,6 +2,7 @@ import type { PublicStatusResponse } from '../schemas/public-status';
 import { readStatusSnapshotPayloadAnyAge } from '../snapshots/public-status-read';
 import type { SettingsResponse } from '../settings';
 
+import { maxSampledGapSec } from '../analytics/uptime';
 import {
   fromRuntimeStatusCode,
   materializeMonitorRuntimeTotals,
@@ -231,7 +232,7 @@ function computeStatusMonitorPresentation(opts: {
       ? false
       : opts.lastCheckedAt === null
         ? true
-        : opts.now - opts.lastCheckedAt > opts.intervalSec * 2;
+        : opts.now - opts.lastCheckedAt > maxSampledGapSec(opts.intervalSec);
 
   return {
     status: isStale ? 'unknown' : stateStatus,
@@ -260,7 +261,7 @@ function computePatchedStatusSegmentTotals(opts: {
     return { downtimeSec: 0, unknownSec: totalSec };
   }
 
-  const validUntil = opts.lastCheckedAt + Math.max(0, opts.intervalSec) * 2;
+  const validUntil = opts.lastCheckedAt + maxSampledGapSec(opts.intervalSec);
   const unknownStart = Math.max(opts.segmentStart, validUntil);
   return {
     downtimeSec: 0,
@@ -269,7 +270,7 @@ function computePatchedStatusSegmentTotals(opts: {
 }
 
 function isFastPatchUpdateFresh(now: number, update: MonitorRuntimeUpdate): boolean {
-  return now - update.checked_at <= update.interval_sec * 2;
+  return now - update.checked_at <= maxSampledGapSec(update.interval_sec);
 }
 
 function prependCappedArray<T>(value: T, source: readonly T[], maxLength: number): T[] {
@@ -466,7 +467,7 @@ export function tryPatchPublicStatusPayloadFromRuntimeUpdates(opts: {
     const totalSec = Math.max(0, now - Math.max(todayStartAt, update.created_at));
     const nextDowntimeSec = currentDowntime + segment.downtimeSec + tail.downtimeSec;
     const nextUnknownSec = currentUnknown + segment.unknownSec + tail.unknownSec;
-    const nextUptimeSec = Math.max(0, totalSec - nextDowntimeSec - nextUnknownSec);
+    const nextUptimeSec = Math.max(0, totalSec - nextDowntimeSec);
     const today = buildTodayStatusUptimeDay(todayStartAt, {
       total_sec: totalSec,
       downtime_sec: nextDowntimeSec,
