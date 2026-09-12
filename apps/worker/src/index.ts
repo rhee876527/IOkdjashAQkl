@@ -1122,7 +1122,7 @@ export default {
     const shouldRunDailyRollup =
       isLegacyDailyRollupCron ||
       (isConsolidatedMinuteCron &&
-        scheduledDate.getUTCHours() === 0 &&
+        scheduledDate.getUTCHours() <= 2 &&
         scheduledDate.getUTCMinutes() === 0);
     const shouldRunRetention =
       isLegacyRetentionCron ||

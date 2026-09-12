@@ -36,6 +36,11 @@ describe('scheduler/daily-rollup', () => {
     const env = createEnv([
       {
         match: (sql) =>
+          sql.includes('select 1 as v from monitor_daily_rollups'),
+        all: () => [],
+      },
+      {
+        match: (sql) =>
           sql.includes('select id, interval_sec, created_at') &&
           sql.includes('from monitors') &&
           sql.includes('where created_at < ?1'),
@@ -166,6 +171,11 @@ describe('scheduler/daily-rollup', () => {
     const env = createEnv([
       {
         match: (sql) =>
+          sql.includes('select 1 as v from monitor_daily_rollups'),
+        all: () => [],
+      },
+      {
+        match: (sql) =>
           sql.includes('select id, interval_sec, created_at') &&
           sql.includes('from monitors') &&
           sql.includes('where created_at < ?1'),
@@ -218,6 +228,11 @@ describe('scheduler/daily-rollup', () => {
     let checkCalls = 0;
 
     const env = createEnv([
+      {
+        match: (sql) =>
+          sql.includes('select 1 as v from monitor_daily_rollups'),
+        all: () => [],
+      },
       {
         match: (sql) =>
           sql.includes('select id, interval_sec, created_at') &&

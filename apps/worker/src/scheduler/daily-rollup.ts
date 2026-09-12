@@ -176,6 +176,16 @@ export async function runDailyRollup(
   const acquired = await acquireLease(env.DB, lockName, nowSec, LOCK_LEASE_SECONDS);
   if (!acquired) return;
 
+  // Retry guard: a later attempt (e.g. 01:00/02:00 UTC) targets the same day as a
+  // successful 00:00 run. If any rollup row already exists for that day, skip so
+  // retries only fill in days that were missed entirely.
+  const { results: existingRollupRows } = await env.DB.prepare(
+    'SELECT 1 AS v FROM monitor_daily_rollups WHERE day_start_at = ?1 LIMIT 1',
+  )
+    .bind(targetDayStart)
+    .all<{ v: number }>();
+  if ((existingRollupRows?.length ?? 0) > 0) return;
+
   const { results: monitorRows } = await env.DB.prepare(
     `
       SELECT id, interval_sec, created_at
