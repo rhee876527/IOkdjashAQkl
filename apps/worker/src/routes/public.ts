@@ -480,6 +480,14 @@ type MaintenanceHistoryCursorRow = {
   ends_at: number;
 };
 
+type DayContextOutageRow = {
+  id: number;
+  started_at: number;
+  ended_at: number | null;
+  initial_error: string | null;
+  last_error: string | null;
+};
+
 function maintenanceWindowRowToApi(row: MaintenanceWindowRow, monitorIds: number[] = []) {
   return {
     id: row.id,
@@ -1366,6 +1374,30 @@ publicRoutes.get('/monitors/:id/day-context', async (c) => {
     .all<IncidentRow>();
 
   const incidents = incidentRows ?? [];
+
+  const { results: outageRows } = await c.env.DB.prepare(
+    `
+      SELECT id, started_at, ended_at, initial_error, last_error
+      FROM outages
+      WHERE monitor_id = ?1
+        AND started_at < ?3
+        AND (ended_at IS NULL OR ended_at > ?2)
+      ORDER BY started_at ASC, id ASC
+      LIMIT 50
+    `,
+  )
+    .bind(id, dayStartAt, dayEndAt)
+    .all<DayContextOutageRow>();
+
+  const dayOutages = (outageRows ?? []).map((row) => ({
+    id: row.id,
+    monitor_id: id,
+    started_at: row.started_at,
+    ended_at: row.ended_at,
+    initial_error: row.initial_error,
+    last_error: row.last_error,
+  }));
+
   if (maintenance.length === 0 && incidents.length === 0) {
     return withVisibilityAwareCaching(
       c.json({
@@ -1373,6 +1405,7 @@ publicRoutes.get('/monitors/:id/day-context', async (c) => {
         day_end_at: dayEndAt,
         maintenance_windows: [],
         incidents: [],
+        outages: dayOutages,
       }),
       includeHiddenMonitors,
     );
@@ -1440,6 +1473,7 @@ publicRoutes.get('/monitors/:id/day-context', async (c) => {
 
         return [incidentRowToApi(r, updatesByIncidentId.get(r.id) ?? [], filteredMonitorIds)];
       }),
+      outages: dayOutages,
     }),
     includeHiddenMonitors,
   );

@@ -643,4 +643,62 @@ describe('public route cache/auth regression', () => {
       ],
     });
   });
+
+  it('returns day-scoped outages on the fallback public day-context route', async () => {
+    installCacheMock(new Map());
+    const dayStart = 1_786_060_800; // 2026-08-07 00:00:00 UTC
+    const handlers: FakeD1QueryHandler[] = [
+      {
+        match: (sql) => sql.includes('from monitors') && sql.includes('where id ='),
+        first: () => ({ id: 17 }),
+      },
+      {
+        match: (sql) => sql.includes('from maintenance_windows'),
+        all: () => [],
+      },
+      {
+        match: (sql) => sql.includes('from incidents'),
+        all: () => [],
+      },
+      {
+        match: (sql) => sql.includes('from outages'),
+        all: (args) => {
+          const start = args[1] as number;
+          const end = args[2] as number;
+          const row = {
+            id: 396,
+            started_at: 1_786_074_480,
+            ended_at: 1_786_085_280,
+            initial_error: 'Unexpected HTTP status: 523',
+            last_error: 'Unexpected HTTP status: 521',
+          };
+          return row.started_at < end && (row.ended_at === null || row.ended_at > start) ? [row] : [];
+        },
+      },
+    ];
+
+    const hit = await requestPublic(`/monitors/17/day-context?day_start_at=${dayStart}`, handlers);
+    expect(hit.res.status).toBe(200);
+    expect(hit.body).toMatchObject({
+      day_start_at: dayStart,
+      day_end_at: dayStart + 86_400,
+      maintenance_windows: [],
+      incidents: [],
+      outages: [
+        {
+          id: 396,
+          monitor_id: 17,
+          started_at: 1_786_074_480,
+          ended_at: 1_786_085_280,
+        },
+      ],
+    });
+
+    const miss = await requestPublic(
+      `/monitors/17/day-context?day_start_at=${dayStart + 2 * 86_400}`,
+      handlers,
+    );
+    expect(miss.res.status).toBe(200);
+    expect(miss.body).toMatchObject({ outages: [] });
+  });
 });

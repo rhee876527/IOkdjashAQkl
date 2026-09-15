@@ -441,6 +441,113 @@ describe('public ui routes', () => {
     });
   });
 
+  describe('day-context outages', () => {
+    const dayStart = 1_786_060_800; // 2026-08-07 00:00:00 UTC
+    const dayEnd = dayStart + 86_400;
+    const outage = {
+      id: 396,
+      started_at: 1_786_074_480, // 2026-08-07 03:48:00 UTC
+      ended_at: 1_786_085_280, // 2026-08-07 06:48:00 UTC
+      initial_error: 'Unexpected HTTP status: 523',
+      last_error: 'Unexpected HTTP status: 521',
+    };
+
+    function dayContextHandlers(extraOutages: typeof outage[] = [outage]) {
+      const handlers: FakeD1QueryHandler[] = [
+        {
+          match: (sql) => sql.includes('from monitors') && sql.includes('where id ='),
+          all: () => [{ id: 17 }],
+        },
+        {
+          match: (sql) => sql.includes('from maintenance_windows'),
+          all: () => [],
+        },
+        {
+          match: (sql) => sql.includes('from incidents'),
+          all: () => [],
+        },
+        {
+          match: (sql) => sql.includes('from outages'),
+          all: (args) => {
+            const start = args[1] as number;
+            const end = args[2] as number;
+            return extraOutages.filter(
+              (row) => row.started_at < end && (row.ended_at === null || row.ended_at > start),
+            );
+          },
+        },
+      ];
+      return handlers;
+    }
+
+    it('returns outages overlapping the requested day even when older than 30d', async () => {
+      const { res, body } = await requestPublicUiViaWorker(
+        `/monitors/17/day-context?day_start_at=${dayStart}`,
+        dayContextHandlers(),
+      );
+
+      expect(res.status).toBe(200);
+      expect(body).toMatchObject({
+        day_start_at: dayStart,
+        day_end_at: dayEnd,
+        maintenance_windows: [],
+        incidents: [],
+        outages: [
+          {
+            id: 396,
+            monitor_id: 17,
+            started_at: outage.started_at,
+            ended_at: outage.ended_at,
+            initial_error: 'Unexpected HTTP status: 523',
+            last_error: 'Unexpected HTTP status: 521',
+          },
+        ],
+      });
+    });
+
+    it('returns no outages for a day the outage does not overlap', async () => {
+      const otherDay = dayStart + 2 * 86_400;
+      const { res, body } = await requestPublicUiViaWorker(
+        `/monitors/17/day-context?day_start_at=${otherDay}`,
+        dayContextHandlers(),
+      );
+
+      expect(res.status).toBe(200);
+      expect(body).toMatchObject({
+        day_start_at: otherDay,
+        outages: [],
+      });
+    });
+
+    it('returns open-ended outages overlapping the day', async () => {
+      const openOutage = { ...outage, id: 397, ended_at: null as number | null };
+      const { res, body } = await requestPublicUiViaWorker(
+        `/monitors/17/day-context?day_start_at=${dayStart}`,
+        dayContextHandlers([openOutage]),
+      );
+
+      expect(res.status).toBe(200);
+      expect((body.outages as unknown[]).length).toBe(1);
+      expect(body).toMatchObject({
+        outages: [{ id: 397, monitor_id: 17, ended_at: null }],
+      });
+    });
+
+    it('rejects invalid day_start_at on the day-context route', async () => {
+      const { res, body } = await requestPublicUiViaWorker(
+        '/monitors/17/day-context?day_start_at=bad',
+        dayContextHandlers(),
+      );
+
+      expect(res.status).toBe(400);
+      expect(body).toMatchObject({
+        error: {
+          code: 'INVALID_ARGUMENT',
+        },
+      });
+    });
+  });
+
   it('rejects unsupported compact latency formats on the fast public-ui worker route', async () => {
     const { res, body } = await requestPublicUiViaWorker('/monitors/21/latency?format=compact-v2', []);
 

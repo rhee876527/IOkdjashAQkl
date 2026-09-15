@@ -9,7 +9,6 @@ import {
   fetchHomepage,
   fetchPublicDayContext,
   fetchPublicIncidentDetail,
-  fetchPublicMonitorOutages,
 } from '../api/client';
 import type {
   Incident,
@@ -392,13 +391,6 @@ export function StatusPage() {
     document.title = derivedTitle;
   }, [derivedTitle]);
 
-  const outagesQuery = useQuery({
-    queryKey: ['public-monitor-outages', selectedDay?.monitorId, selectedDay?.dayStartAt],
-    queryFn: () =>
-      fetchPublicMonitorOutages(selectedDay?.monitorId as number, { range: '30d', limit: 200 }),
-    enabled: selectedDay !== null,
-  });
-
   const dayContextQuery = useQuery({
     queryKey: ['public-day-context', selectedDay?.monitorId, selectedDay?.dayStartAt],
     queryFn: () =>
@@ -408,11 +400,11 @@ export function StatusPage() {
 
   const currentDayOutages = useMemo((): Outage[] => {
     if (!selectedDay) return [];
-    const all = outagesQuery.data?.outages ?? [];
+    const all = dayContextQuery.data?.outages ?? [];
     const dayStart = selectedDay.dayStartAt;
     const dayEnd = dayStart + 86400;
     return all.filter((o) => o.started_at < dayEnd && (o.ended_at ?? dayEnd) > dayStart);
-  }, [outagesQuery.data?.outages, selectedDay]);
+  }, [dayContextQuery.data?.outages, selectedDay]);
 
   const incidentDetailQuery = useQuery({
     queryKey: [
@@ -808,22 +800,6 @@ export function StatusPage() {
           timeZone={timeZone}
           onClose={() => setSelectedDay(null)}
         />
-      )}
-
-      {selectedDay && outagesQuery.isLoading && (
-        <div className="fixed inset-0 flex items-center justify-center pointer-events-none">
-          <div className="bg-slate-900/80 text-white text-sm px-3 py-2 rounded-lg">
-            {t('status_page.loading_outages')}
-          </div>
-        </div>
-      )}
-
-      {selectedDay && outagesQuery.isError && (
-        <div className="fixed inset-0 flex items-center justify-center pointer-events-none">
-          <div className="bg-red-600/90 text-white text-sm px-3 py-2 rounded-lg">
-            {t('status_page.failed_load_outages')}
-          </div>
-        </div>
       )}
 
       {selectedDay && dayContextQuery.isLoading && (

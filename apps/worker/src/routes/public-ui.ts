@@ -130,6 +130,14 @@ type MaintenanceWindowMonitorLinkRow = {
   monitor_id: number;
 };
 
+type DayContextOutageRow = {
+  id: number;
+  started_at: number;
+  ended_at: number | null;
+  initial_error: string | null;
+  last_error: string | null;
+};
+
 function toIncidentStatus(
   value: string | null,
 ): 'investigating' | 'identified' | 'monitoring' | 'resolved' {
@@ -1049,7 +1057,7 @@ publicUiRoutes.get('/monitors/:id/day-context', async (c) => {
   trace.setLabel('route', 'public/day-context');
   trace.setLabel('monitor_id', id);
 
-  const [monitorResult, maintenanceResult, incidentResult] = await trace.timeAsync(
+  const [monitorResult, maintenanceResult, incidentResult, outageResult] = await trace.timeAsync(
     'primary_queries',
     async () =>
       await c.env.DB.batch([
@@ -1091,6 +1099,19 @@ publicUiRoutes.get('/monitors/:id/day-context', async (c) => {
           `,
         )
           .bind(id, dayStartAt, dayEndAt),
+        preparePublicUiStatement(
+          c.env.DB,
+          `
+            SELECT id, started_at, ended_at, initial_error, last_error
+            FROM outages
+            WHERE monitor_id = ?1
+              AND started_at < ?3
+              AND (ended_at IS NULL OR ended_at > ?2)
+            ORDER BY started_at ASC, id ASC
+            LIMIT 50
+          `,
+        )
+          .bind(id, dayStartAt, dayEndAt),
       ]),
   );
   const monitor = takeBatchFirstRow<{ id: number }>(monitorResult);
@@ -1099,6 +1120,14 @@ publicUiRoutes.get('/monitors/:id/day-context', async (c) => {
   }
   const maintenance = takeBatchRows<MaintenanceWindowRow>(maintenanceResult);
   const incidents = takeBatchRows<IncidentRow>(incidentResult);
+  const dayOutages = takeBatchRows<DayContextOutageRow>(outageResult).map((row) => ({
+    id: row.id,
+    monitor_id: id,
+    started_at: row.started_at,
+    ended_at: row.ended_at,
+    initial_error: row.initial_error,
+    last_error: row.last_error,
+  }));
   if (maintenance.length === 0 && incidents.length === 0) {
     const res = withVisibilityAwareCaching(
       c.json({
@@ -1106,6 +1135,7 @@ publicUiRoutes.get('/monitors/:id/day-context', async (c) => {
         day_end_at: dayEndAt,
         maintenance_windows: [],
         incidents: [],
+        outages: dayOutages,
       }),
       includeHiddenMonitors,
     );
@@ -1240,6 +1270,7 @@ publicUiRoutes.get('/monitors/:id/day-context', async (c) => {
         }
         return [incidentRowToApi(row, updatesByIncidentId.get(row.id) ?? [], filteredMonitorIds)];
       }),
+      outages: dayOutages,
     }),
     includeHiddenMonitors,
   );

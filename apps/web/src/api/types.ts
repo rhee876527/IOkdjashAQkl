@@ -304,6 +304,7 @@ export interface PublicDayContextResponse {
   day_end_at: number;
   maintenance_windows: MaintenanceWindow[];
   incidents: Incident[];
+  outages: Outage[];
 }
 
 export interface MonitorOutagesResponse {
