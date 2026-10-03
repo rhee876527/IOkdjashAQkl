@@ -2171,3 +2171,107 @@ export async function runScheduledTick(env: Env, ctx: ExecutionContext): Promise
     });
   }
 }
+
+const ROLLUP_SERVICE_TIMEOUT_MS = 30_000;
+// Monitors per rollup service call. Each call runs in its own isolate with its
+// own CPU budget; fixed small chunks keep storm-volume days well under it.
+const ROLLUP_SERVICE_CHUNK_SIZE = 5;
+
+function chunkIds(ids: readonly number[], size: number): number[][] {
+  if (ids.length === 0) {
+    return [];
+  }
+
+  const chunkSize = Math.max(1, Math.floor(size));
+  const chunks: number[][] = [];
+  for (let index = 0; index < ids.length; index += chunkSize) {
+    chunks.push(ids.slice(index, index + chunkSize));
+  }
+  return chunks;
+}
+
+function shouldRunRollupViaService(env: Env): boolean {
+  const raw = (env as unknown as Record<string, unknown>).UPTIMER_SCHEDULED_ROLLUP_VIA_SERVICE;
+  if (raw === undefined) {
+    return true;
+  }
+  return isTruthyEnvFlag(raw);
+}
+
+/**
+ * Run the daily rollup (with backfill) through the SELF service binding so each
+ * chunk executes in its own isolate with a fresh CPU budget. The per-minute
+ * tick's flap-driven CPU burn can no longer take the rollup down with it.
+ *
+ * Throws when the service path is unavailable or every needed call failed, so
+ * the caller can fall back to the inline path.
+ */
+export async function runDailyRollupViaService(
+  env: Env,
+  controller: ScheduledController,
+): Promise<void> {
+  if (!shouldRunRollupViaService(env)) {
+    throw new Error('daily rollup: service path disabled by flag');
+  }
+  if (!env.SELF) {
+    throw new Error('daily rollup: SELF service binding missing');
+  }
+  if (!env.ADMIN_TOKEN) {
+    throw new Error('daily rollup: ADMIN_TOKEN missing');
+  }
+
+  const { getRollupCandidateDayStartsForNow, listRollupEligibleMonitorIds } =
+    await import('./daily-rollup');
+
+  const nowSec = Math.floor((controller.scheduledTime ?? Date.now()) / 1000);
+  let daysNeedingWork = 0;
+  let completedDays = 0;
+
+  for (const dayStart of getRollupCandidateDayStartsForNow(nowSec)) {
+    const ids = await listRollupEligibleMonitorIds(env.DB, dayStart + 86400);
+    if (ids.length === 0) {
+      continue;
+    }
+    daysNeedingWork += 1;
+
+    let dayOk = true;
+    for (const chunk of chunkIds(ids, ROLLUP_SERVICE_CHUNK_SIZE)) {
+      try {
+        const res = await fetchSelfWithTimeout(
+          env,
+          new Request('http://internal/api/v1/internal/rollup/daily', {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${env.ADMIN_TOKEN}`,
+              'Content-Type': 'application/json; charset=utf-8',
+            },
+            body: JSON.stringify({ day_start_at: dayStart, monitor_ids: chunk }),
+          }),
+          ROLLUP_SERVICE_TIMEOUT_MS,
+          'daily rollup service',
+        );
+        const bodyText = await res.text().catch(() => '');
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status} ${bodyText}`.trim());
+        }
+      } catch (err) {
+        // The per-monitor resume guard makes every chunk retry-safe: the next
+        // hourly attempt (or backfill) completes whatever this one missed.
+        console.warn(
+          `scheduled: daily rollup service chunk failed day_start_at=${dayStart} monitors=${chunk.length}`,
+          err,
+        );
+        dayOk = false;
+        break;
+      }
+    }
+
+    if (dayOk) {
+      completedDays += 1;
+    }
+  }
+
+  if (daysNeedingWork > 0 && completedDays === 0) {
+    throw new Error('daily rollup: all service calls failed');
+  }
+}

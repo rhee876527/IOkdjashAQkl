@@ -204,6 +204,11 @@ const internalRuntimeUpdateFragmentsWriteBodySchema = z.object({
   runtime_updates: z.array(z.unknown()),
 });
 
+const internalDailyRollupBodySchema = z.object({
+  day_start_at: z.number().int().min(0).optional(),
+  monitor_ids: z.array(z.number().int().positive()).max(500).optional(),
+});
+
 const internalShardedPublicSnapshotBodySchema = z.object({
   kind: z.enum(['homepage', 'status']),
   assembly: z.enum(['validated', 'json']).optional().default('validated'),
@@ -814,6 +819,57 @@ async function handleInternalRuntimeFragmentsRefresh(
   );
 }
 
+async function handleInternalDailyRollup(request: Request, env: Env): Promise<Response> {
+  if (!isInternalServiceRequest(request)) {
+    return buildNotFoundJsonResponse(request.headers.get('Origin'));
+  }
+  if (request.method !== 'POST') {
+    return new Response('Method Not Allowed', { status: 405 });
+  }
+  if (!normalizeInternalTruthy(env.UPTIMER_SCHEDULED_ROLLUP_VIA_SERVICE ?? null)) {
+    return buildNotFoundJsonResponse(request.headers.get('Origin'));
+  }
+  if (!hasValidInternalAuth(request, env)) {
+    return new Response('Forbidden', { status: 403 });
+  }
+  if (isRequestBodyTooLarge(request)) {
+    return new Response('Payload Too Large', { status: 413 });
+  }
+
+  const body = await request.json().catch(() => null);
+  const parsed = internalDailyRollupBodySchema.safeParse(body);
+  if (!parsed.success) {
+    return new Response('Bad Request', { status: 400 });
+  }
+
+  const now = Math.floor(Date.now() / 1000);
+  const todayStart = Math.floor(now / 86400) * 86400;
+  const targetDayStart = parsed.data.day_start_at ?? todayStart - 86400;
+  if (targetDayStart >= todayStart) {
+    return new Response('Bad Request', { status: 400 });
+  }
+
+  const { runDailyRollupForDay } = await import('./scheduler/daily-rollup');
+  const result = await runDailyRollupForDay(env, {
+    targetDayStart,
+    nowSec: now,
+    now,
+    ...(parsed.data.monitor_ids ? { monitorIds: parsed.data.monitor_ids } : {}),
+  });
+  return buildInternalJsonResponse(
+    {
+      ok: true,
+      day_start_at: result.dayStartAt,
+      processed: result.processed,
+      total: result.total,
+      checks_read: result.checksRead,
+      outages_read: result.outagesRead,
+      ...(result.skipped ? { skipped: result.skipped } : {}),
+    },
+    true,
+  );
+}
+
 async function handleInternalScheduledCheckBatch(
   request: Request,
   env: Env,
@@ -1097,6 +1153,9 @@ export default {
     if (url.pathname === '/api/v1/internal/refresh/runtime-fragments') {
       return handleInternalRuntimeFragmentsRefresh(request, env);
     }
+    if (url.pathname === '/api/v1/internal/rollup/daily') {
+      return handleInternalDailyRollup(request, env);
+    }
     if (url.pathname === '/api/v1/internal/write/runtime-update-fragments') {
       return handleInternalRuntimeUpdateFragmentsWrite(request, env);
     }
@@ -1122,7 +1181,7 @@ export default {
     const shouldRunDailyRollup =
       isLegacyDailyRollupCron ||
       (isConsolidatedMinuteCron &&
-        scheduledDate.getUTCHours() <= 2 &&
+        scheduledDate.getUTCHours() <= 4 &&
         scheduledDate.getUTCMinutes() === 0);
     const shouldRunRetention =
       isLegacyRetentionCron ||
@@ -1132,14 +1191,31 @@ export default {
 
     // Keep legacy cron branches during Cloudflare's trigger propagation window,
     // but only the consolidated minute cron runs the monitor tick.
+    // Single-flight shared import: the rollup waitUntil task and the tick below
+    // must not trigger concurrent dynamic imports of the same module.
+    let scheduledModulePromise: Promise<typeof import('./scheduler/scheduled')> | undefined;
+    const getScheduledModule = () =>
+      (scheduledModulePromise ??= import('./scheduler/scheduled'));
+
     if (shouldRunDailyRollup) {
       ctx.waitUntil(
         (async () => {
-          const { runDailyRollup } = await import('./scheduler/daily-rollup');
-          await runDailyRollup(env, controller, ctx);
-        })().catch((err) => {
-          console.error('scheduled: daily rollup failed', err);
-        }),
+          // Prefer the service path: each chunk runs in its own isolate with a
+          // fresh CPU budget, so a flap-loaded tick can't kill the rollup.
+          // Any failure falls back to the historical inline path.
+          try {
+            const scheduledModule = await getScheduledModule();
+            await scheduledModule.runDailyRollupViaService(env, controller);
+          } catch (err) {
+            console.warn('scheduled: daily rollup via service failed, falling back inline', err);
+            try {
+              const { runDailyRollup } = await import('./scheduler/daily-rollup');
+              await runDailyRollup(env, controller, ctx);
+            } catch (fallbackErr) {
+              console.error('scheduled: daily rollup failed', fallbackErr);
+            }
+          }
+        })(),
       );
     }
     if (shouldRunRetention) {
@@ -1157,7 +1233,7 @@ export default {
       return;
     }
 
-    const { runScheduledTick } = await import('./scheduler/scheduled');
+    const { runScheduledTick } = await getScheduledModule();
     await runScheduledTick(env, ctx);
   },
 } satisfies ExportedHandler<Env>;

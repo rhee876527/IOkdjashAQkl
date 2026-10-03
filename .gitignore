@@ -41,3 +41,6 @@ CUT-D1-*
 PENDING-IMPLEMENTATION.md
 REMAINING.md
 UNKNOWN.md
+
+# exported logs
+*.csv

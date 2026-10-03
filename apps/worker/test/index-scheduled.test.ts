@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const runDailyRollup = vi.fn();
+const runDailyRollupViaService = vi.fn();
 const runRetention = vi.fn();
 const runScheduledTick = vi.fn();
 
@@ -13,6 +14,7 @@ vi.mock('../src/scheduler/retention', () => ({
 }));
 
 vi.mock('../src/scheduler/scheduled', () => ({
+  runDailyRollupViaService,
   runScheduledTick,
 }));
 
@@ -51,12 +53,13 @@ describe('worker scheduled dispatch', () => {
     await worker.scheduled(controller, env, ctx);
 
     expect(runScheduledTick).toHaveBeenCalledWith(env, ctx);
+    expect(runDailyRollupViaService).not.toHaveBeenCalled();
     expect(runDailyRollup).not.toHaveBeenCalled();
     expect(runRetention).not.toHaveBeenCalled();
     expect(waitUntil).not.toHaveBeenCalled();
   });
 
-  it('queues daily rollup at UTC midnight on the consolidated minute cron', async () => {
+  it('runs the daily rollup through the service path at UTC midnight', async () => {
     const controller = {
       cron: '* * * * *',
       scheduledTime: Date.UTC(2026, 1, 18, 0, 0, 0),
@@ -69,8 +72,56 @@ describe('worker scheduled dispatch', () => {
 
     expect(runScheduledTick).toHaveBeenCalledWith(env, ctx);
     expect(waitUntil).toHaveBeenCalledTimes(1);
-    expect(runDailyRollup).toHaveBeenCalledWith(env, controller, ctx);
+    expect(runDailyRollupViaService).toHaveBeenCalledWith(env, controller);
+    expect(runDailyRollup).not.toHaveBeenCalled();
     expect(runRetention).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the inline rollup when the service path fails', async () => {
+    runDailyRollupViaService.mockRejectedValueOnce(new Error('service down'));
+    const controller = {
+      cron: '* * * * *',
+      scheduledTime: Date.UTC(2026, 1, 18, 1, 0, 0),
+    } as ScheduledController;
+    const env = {} as Env;
+    const { ctx, waitUntilPromises } = createExecutionContext();
+
+    await worker.scheduled(controller, env, ctx);
+    await Promise.all(waitUntilPromises);
+
+    expect(runDailyRollupViaService).toHaveBeenCalledWith(env, controller);
+    expect(runDailyRollup).toHaveBeenCalledWith(env, controller, ctx);
+  });
+
+  it('runs the daily rollup on the widened 00:00-04:00 UTC window', async () => {
+    for (const hour of [2, 3, 4]) {
+      vi.clearAllMocks();
+      const controller = {
+        cron: '* * * * *',
+        scheduledTime: Date.UTC(2026, 1, 18, hour, 0, 0),
+      } as ScheduledController;
+      const env = {} as Env;
+      const { ctx, waitUntilPromises } = createExecutionContext();
+
+      await worker.scheduled(controller, env, ctx);
+      await Promise.all(waitUntilPromises);
+
+      expect(runDailyRollupViaService).toHaveBeenCalledWith(env, controller);
+    }
+
+    vi.clearAllMocks();
+    const controller = {
+      cron: '* * * * *',
+      scheduledTime: Date.UTC(2026, 1, 18, 5, 0, 0),
+    } as ScheduledController;
+    const env = {} as Env;
+    const { ctx, waitUntilPromises } = createExecutionContext();
+
+    await worker.scheduled(controller, env, ctx);
+    await Promise.all(waitUntilPromises);
+
+    expect(runDailyRollupViaService).not.toHaveBeenCalled();
+    expect(runDailyRollup).not.toHaveBeenCalled();
   });
 
   it('queues retention at UTC 00:30 on the consolidated minute cron', async () => {
@@ -87,6 +138,7 @@ describe('worker scheduled dispatch', () => {
     expect(runScheduledTick).toHaveBeenCalledWith(env, ctx);
     expect(waitUntil).toHaveBeenCalledTimes(1);
     expect(runRetention).toHaveBeenCalledWith(env, controller);
+    expect(runDailyRollupViaService).not.toHaveBeenCalled();
     expect(runDailyRollup).not.toHaveBeenCalled();
   });
 
@@ -102,7 +154,8 @@ describe('worker scheduled dispatch', () => {
     await Promise.all(waitUntilPromises);
 
     expect(waitUntil).toHaveBeenCalledTimes(1);
-    expect(runDailyRollup).toHaveBeenCalledWith(env, controller, ctx);
+    expect(runDailyRollupViaService).toHaveBeenCalledWith(env, controller);
+    expect(runDailyRollup).not.toHaveBeenCalled();
     expect(runRetention).not.toHaveBeenCalled();
     expect(runScheduledTick).not.toHaveBeenCalled();
   });
@@ -120,6 +173,7 @@ describe('worker scheduled dispatch', () => {
 
     expect(waitUntil).toHaveBeenCalledTimes(1);
     expect(runRetention).toHaveBeenCalledWith(env, controller);
+    expect(runDailyRollupViaService).not.toHaveBeenCalled();
     expect(runDailyRollup).not.toHaveBeenCalled();
     expect(runScheduledTick).not.toHaveBeenCalled();
   });

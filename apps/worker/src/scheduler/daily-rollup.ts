@@ -4,7 +4,6 @@ import {
   mergeIntervals,
   overlapSeconds,
   sumIntervals,
-  utcDayStart,
   type Interval,
 } from '../analytics/uptime';
 import type { Env } from '../env';
@@ -41,6 +40,21 @@ function toCheckStatus(value: string | null): 'up' | 'down' | 'maintenance' | 'u
 const LOCK_LEASE_SECONDS = 10 * 60;
 const LOCK_PREFIX = 'analytics:daily-rollup:';
 const DAILY_ROLLUP_MONITOR_BATCH_SIZE = 90;
+
+// Backfill window: a lost night heals itself on later runs instead of leaving a
+// permanent hole. Bounded so one invocation never blows the CPU budget.
+export const ROLLUP_BACKFILL_DAYS = 7;
+export const ROLLUP_MAX_DAYS_PER_RUN = 3;
+
+/** Candidate day starts (UTC midnight) for a run, oldest-first, bounded per run. */
+export function getRollupCandidateDayStartsForNow(nowSec: number): number[] {
+  const todayStart = Math.floor(nowSec / 86400) * 86400;
+  const days: number[] = [];
+  for (let ago = ROLLUP_BACKFILL_DAYS; ago >= 1; ago -= 1) {
+    days.push(todayStart - ago * 86400);
+  }
+  return days.slice(0, ROLLUP_MAX_DAYS_PER_RUN);
+}
 
 function chunkMonitorRows(rows: readonly MonitorRow[], size: number): MonitorRow[][] {
   if (rows.length === 0) {
@@ -162,49 +176,126 @@ function maxSampledGapSec(intervalSec: number): number {
   return lcm + 60 * branch;
 }
 
-export async function runDailyRollup(
+export type DailyRollupDayResult = {
+  dayStartAt: number;
+  leaseAcquired: boolean;
+  /** Monitors with a rollup row written by this call. */
+  processed: number;
+  /** Monitors eligible for the day (including already-rolled ones). */
+  total: number;
+  checksRead: number;
+  outagesRead: number;
+  skipped: 'lease' | 'complete' | null;
+};
+
+async function listRollupEligibleMonitors(
+  db: D1Database,
+  targetDayEnd: number,
+  onlyIds?: readonly number[],
+): Promise<MonitorRow[]> {
+  const ids = (onlyIds ?? []).filter((id) => Number.isInteger(id) && id > 0);
+  const placeholders = ids.map((_, index) => `?${index + 2}`).join(', ');
+  const { results } = await db
+    .prepare(
+      `
+      SELECT id, interval_sec, created_at
+      FROM monitors
+      WHERE created_at < ?1${ids.length > 0 ? ` AND id IN (${placeholders})` : ''}
+      ORDER BY id
+    `,
+    )
+    .bind(targetDayEnd, ...ids)
+    .all<MonitorRow>();
+
+  return results ?? [];
+}
+
+export async function listRollupEligibleMonitorIds(
+  db: D1Database,
+  targetDayEnd: number,
+): Promise<number[]> {
+  const monitors = await listRollupEligibleMonitors(db, targetDayEnd);
+  return monitors.map((monitor) => monitor.id);
+}
+
+async function listExistingRollupMonitorIds(
+  db: D1Database,
+  targetDayStart: number,
+): Promise<Set<number>> {
+  const { results } = await db
+    .prepare('SELECT monitor_id FROM monitor_daily_rollups WHERE day_start_at = ?1')
+    .bind(targetDayStart)
+    .all<{ monitor_id: number }>();
+
+  return new Set((results ?? []).map((row) => row.monitor_id));
+}
+
+export async function runDailyRollupForDay(
   env: Env,
-  controller: ScheduledController,
-  _ctx: ExecutionContext,
-): Promise<void> {
-  const nowSec = Math.floor((controller.scheduledTime ?? Date.now()) / 1000);
-  const todayStart = utcDayStart(nowSec);
-  const targetDayStart = todayStart - 86400;
+  opts: {
+    targetDayStart: number;
+    nowSec: number;
+    now: number;
+    /** Restrict to these monitors (service chunking). Intersected with the missing set. */
+    monitorIds?: readonly number[];
+  },
+): Promise<DailyRollupDayResult> {
+  const { targetDayStart, nowSec, now } = opts;
   const targetDayEnd = targetDayStart + 86400;
 
   const lockName = `${LOCK_PREFIX}${targetDayStart}`;
   const acquired = await acquireLease(env.DB, lockName, nowSec, LOCK_LEASE_SECONDS);
-  if (!acquired) return;
-
-  // Retry guard: a later attempt (e.g. 01:00/02:00 UTC) targets the same day as a
-  // successful 00:00 run. If any rollup row already exists for that day, skip so
-  // retries only fill in days that were missed entirely.
-  const { results: existingRollupRows } = await env.DB.prepare(
-    'SELECT 1 AS v FROM monitor_daily_rollups WHERE day_start_at = ?1 LIMIT 1',
-  )
-    .bind(targetDayStart)
-    .all<{ v: number }>();
-  if ((existingRollupRows?.length ?? 0) > 0) return;
-
-  const { results: monitorRows } = await env.DB.prepare(
-    `
-      SELECT id, interval_sec, created_at
-      FROM monitors
-      WHERE created_at < ?1
-      ORDER BY id
-    `,
-  )
-    .bind(targetDayEnd)
-    .all<MonitorRow>();
-
-  const monitors = monitorRows ?? [];
-  if (monitors.length === 0) {
-    return;
+  if (!acquired) {
+    console.log(`daily-rollup: skip day_start_at=${targetDayStart} reason=lease`);
+    return {
+      dayStartAt: targetDayStart,
+      leaseAcquired: false,
+      processed: 0,
+      total: 0,
+      checksRead: 0,
+      outagesRead: 0,
+      skipped: 'lease',
+    };
   }
 
+  const eligible = await listRollupEligibleMonitors(env.DB, targetDayEnd, opts.monitorIds);
+  if (eligible.length === 0) {
+    return {
+      dayStartAt: targetDayStart,
+      leaseAcquired: true,
+      processed: 0,
+      total: 0,
+      checksRead: 0,
+      outagesRead: 0,
+      skipped: 'complete',
+    };
+  }
+
+  // Resume guard: retries (and later backfill runs) only process monitors that
+  // are still missing a row for the day, so a partial write can never strand
+  // the remaining monitors permanently.
+  const existing = await listExistingRollupMonitorIds(env.DB, targetDayStart);
+  const monitors = eligible.filter((monitor) => !existing.has(monitor.id));
+  if (monitors.length === 0) {
+    console.log(
+      `daily-rollup: skip day_start_at=${targetDayStart} reason=complete total=${eligible.length}`,
+    );
+    return {
+      dayStartAt: targetDayStart,
+      leaseAcquired: true,
+      processed: 0,
+      total: eligible.length,
+      checksRead: 0,
+      outagesRead: 0,
+      skipped: 'complete',
+    };
+  }
+
+  const wallStart = Date.now();
   const statements: D1PreparedStatement[] = [];
   let processed = 0;
-  const now = Math.floor(Date.now() / 1000);
+  let checksRead = 0;
+  let outagesRead = 0;
 
   for (const monitorBatch of chunkMonitorRows(monitors, DAILY_ROLLUP_MONITOR_BATCH_SIZE)) {
     const rangeStartByMonitorId = new Map<number, number>();
@@ -239,7 +330,10 @@ export async function runDailyRollup(
       ),
     ]);
     const outageRowsByMonitorId = groupRowsByMonitorId(outageRows);
-    const checkRowsByMonitorId = groupRowsByMonitorId(checkRowGroups.flat());
+    const flatCheckRows = checkRowGroups.flat();
+    const checkRowsByMonitorId = groupRowsByMonitorId(flatCheckRows);
+    outagesRead += outageRows.length;
+    checksRead += flatCheckRows.length;
 
     for (const m of monitorBatch) {
       const rangeStart = rangeStartByMonitorId.get(m.id) ?? targetDayStart;
@@ -376,16 +470,13 @@ export async function runDailyRollup(
       );
 
       processed++;
-
-      // Flush in batches to keep memory bounded.
-      if (statements.length >= 50) {
-        await env.DB.batch(statements.splice(0, statements.length));
-      }
     }
-  }
 
-  if (statements.length > 0) {
-    await env.DB.batch(statements);
+    // Flush per chunk so a kill leaves completable partial progress instead of
+    // zero rows for the day (the resume guard picks up the remainder next attempt).
+    if (statements.length > 0) {
+      await env.DB.batch(statements.splice(0, statements.length));
+    }
   }
 
   await refreshPublicAnalyticsOverviewSnapshotIfNeeded({
@@ -395,7 +486,35 @@ export async function runDailyRollup(
     force: true,
   });
 
+  const wallMs = Date.now() - wallStart;
   console.log(
-    `daily-rollup: processed ${processed}/${monitors.length} monitors for day_start_at=${targetDayStart}`,
+    `daily-rollup: day_start_at=${targetDayStart} processed=${processed}/${monitors.length} checks_read=${checksRead} outages_read=${outagesRead} wall_ms=${wallMs}`,
   );
+
+  return {
+    dayStartAt: targetDayStart,
+    leaseAcquired: true,
+    processed,
+    total: eligible.length,
+    checksRead,
+    outagesRead,
+    skipped: null,
+  };
+}
+
+export async function runDailyRollup(
+  env: Env,
+  controller: ScheduledController,
+  _ctx: ExecutionContext,
+): Promise<void> {
+  const nowSec = Math.floor((controller.scheduledTime ?? Date.now()) / 1000);
+  const now = Math.floor(Date.now() / 1000);
+
+  for (const targetDayStart of getRollupCandidateDayStartsForNow(nowSec)) {
+    try {
+      await runDailyRollupForDay(env, { targetDayStart, nowSec, now });
+    } catch (err) {
+      console.error(`scheduled: daily rollup failed day_start_at=${targetDayStart}`, err);
+    }
+  }
 }

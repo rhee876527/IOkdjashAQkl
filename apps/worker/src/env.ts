@@ -42,6 +42,7 @@ export interface Env {
   UPTIMER_INTERNAL_CHECK_BATCH_DIAGNOSTICS?: string;
   UPTIMER_INTERNAL_CHECK_BATCH_TRUST_SCHEDULER_LEASE?: string;
   UPTIMER_SCHEDULED_REFRESH_LOGS?: string;
+  UPTIMER_SCHEDULED_ROLLUP_VIA_SERVICE?: string;
 
   // In-memory, per-instance rate limit for admin endpoints.
   // Keep optional so older deployments don't break.
