@@ -462,17 +462,17 @@ describe('scheduler/daily-rollup', () => {
     expect(result).toMatchObject({ processed: 91, total: 91, skipped: null });
   });
 
-  it('selects the oldest missing days first and bounds the backfill per run', () => {
+  it('selects the newest missing days first and bounds the backfill per run', () => {
     const scheduledTime = Date.UTC(2026, 0, 20, 0, 0, 0);
     const day = (monthDay: number) => Date.UTC(2026, 0, monthDay, 0, 0, 0) / 1000;
     expect(getRollupCandidateDayStartsForNow(Math.floor(scheduledTime / 1000))).toEqual([
-      day(13),
-      day(14),
-      day(15),
+      day(19),
+      day(18),
+      day(17),
     ]);
   });
 
-  it('backfills older missing days while leaving newer ones for later runs', async () => {
+  it('backfills newest missing days while leaving older ones for later runs', async () => {
     const scheduledTime = Date.UTC(2026, 0, 20, 0, 0, 0);
     const day = (monthDay: number) => Date.UTC(2026, 0, monthDay, 0, 0, 0) / 1000;
     const inserted = new Set<string>();
@@ -527,20 +527,20 @@ describe('scheduler/daily-rollup', () => {
       { waitUntil: vi.fn() } as unknown as ExecutionContext,
     );
 
-    // Oldest-first, capped at 3 days per run: newer gaps (01-16..01-19) wait
+    // Newest-first, capped at 3 days per run: older gaps (01-13..01-16) wait
     // for later attempts instead of risking the CPU budget in one invocation.
     expect([...inserted].sort()).toEqual(
-      [13, 14, 15].flatMap((monthDay) => [`1@${day(monthDay)}`, `2@${day(monthDay)}`]).sort(),
+      [17, 18, 19].flatMap((monthDay) => [`1@${day(monthDay)}`, `2@${day(monthDay)}`]).sort(),
     );
-    expect(rollupInsertDays.slice(0, 2)).toEqual([day(13), day(13)]);
+    expect(rollupInsertDays.slice(0, 2)).toEqual([day(19), day(19)]);
     const rollupLeases = vi
       .mocked(acquireLease)
       .mock.calls.map((call) => call[1])
       .filter((name) => typeof name === 'string' && name.startsWith('analytics:daily-rollup:'));
     expect(rollupLeases).toEqual([
-      `analytics:daily-rollup:${day(13)}`,
-      `analytics:daily-rollup:${day(14)}`,
-      `analytics:daily-rollup:${day(15)}`,
+      `analytics:daily-rollup:${day(19)}`,
+      `analytics:daily-rollup:${day(18)}`,
+      `analytics:daily-rollup:${day(17)}`,
     ]);
   });
 });

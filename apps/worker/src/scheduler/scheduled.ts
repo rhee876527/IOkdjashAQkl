@@ -2220,7 +2220,7 @@ export async function runDailyRollupViaService(
     throw new Error('daily rollup: ADMIN_TOKEN missing');
   }
 
-  const { getRollupCandidateDayStartsForNow, listRollupEligibleMonitorIds } =
+  const { getRollupCandidateDayStartsForNow, listRollupEligibleMonitorIds, listExistingRollupMonitorIds } =
     await import('./daily-rollup');
 
   const nowSec = Math.floor((controller.scheduledTime ?? Date.now()) / 1000);
@@ -2232,10 +2232,22 @@ export async function runDailyRollupViaService(
     if (ids.length === 0) {
       continue;
     }
+    // Skip days that are already fully rolled before fanning out: each
+    // service chunk runs in its own isolate with its own CPU budget, so
+    // don't spend invocations re-proving complete days. Partial days still
+    // fan out, restricted to the monitors missing a row.
+    const existing = await listExistingRollupMonitorIds(env.DB, dayStart);
+    const missing = ids.filter((id) => !existing.has(id));
+    if (missing.length === 0) {
+      console.log(
+        `daily-rollup: skip day_start_at=${dayStart} reason=complete total=${ids.length}`,
+      );
+      continue;
+    }
     daysNeedingWork += 1;
 
     let dayOk = true;
-    for (const chunk of chunkIds(ids, ROLLUP_SERVICE_CHUNK_SIZE)) {
+    for (const chunk of chunkIds(missing, ROLLUP_SERVICE_CHUNK_SIZE)) {
       try {
         const res = await fetchSelfWithTimeout(
           env,

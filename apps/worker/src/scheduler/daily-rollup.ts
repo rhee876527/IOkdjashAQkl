@@ -46,11 +46,11 @@ const DAILY_ROLLUP_MONITOR_BATCH_SIZE = 90;
 export const ROLLUP_BACKFILL_DAYS = 7;
 export const ROLLUP_MAX_DAYS_PER_RUN = 3;
 
-/** Candidate day starts (UTC midnight) for a run, oldest-first, bounded per run. */
+/** Candidate day starts (UTC midnight) for a run, newest-first, bounded per run. */
 export function getRollupCandidateDayStartsForNow(nowSec: number): number[] {
   const todayStart = Math.floor(nowSec / 86400) * 86400;
   const days: number[] = [];
-  for (let ago = ROLLUP_BACKFILL_DAYS; ago >= 1; ago -= 1) {
+  for (let ago = 1; ago <= ROLLUP_BACKFILL_DAYS; ago += 1) {
     days.push(todayStart - ago * 86400);
   }
   return days.slice(0, ROLLUP_MAX_DAYS_PER_RUN);
@@ -218,7 +218,7 @@ export async function listRollupEligibleMonitorIds(
   return monitors.map((monitor) => monitor.id);
 }
 
-async function listExistingRollupMonitorIds(
+export async function listExistingRollupMonitorIds(
   db: D1Database,
   targetDayStart: number,
 ): Promise<Set<number>> {
